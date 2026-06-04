@@ -15,8 +15,26 @@
 | 6 | 현재 학습률·Epoch·Step·처리 파일명 표시 | 탭 5 모니터링 |
 | 7 | 로그 표시 및 파일 저장 | 탭 5 로그창 + `<out_dir>/logs/gui_train_*.log` |
 | 8 | PC + Colab 지원 | Gradio 웹 UI |
+| + | M4-SAR 데이터셋 다운로드 (Colab 전용) | 탭 0 "데이터셋 다운로드" |
 
 설정은 모두 `gui_config.json` 에 저장되어 다음 실행 시 자동 복원됩니다.
+
+## M4-SAR 데이터셋 다운로드 (Colab 전용)
+
+탭 0에서 HuggingFace [`wchao0601/m4-sar`](https://huggingface.co/datasets/wchao0601/m4-sar)
+의 `M4-SAR.zip` 을 받아 지정 폴더에 바로 압축 해제합니다.
+
+- **Colab 환경에서만 기본 활성화**됩니다 (`google.colab` 모듈 감지로 판별).
+- 사내망 등 **비-Colab 환경에서는 외부망 차단을 가정해 비활성화**됩니다.
+  외부망이 가능한 환경이라면 "외부망 다운로드 강제 허용" 체크박스로 켤 수 있습니다.
+- 다운로드 진행률(GB/%, 속도)과 압축 해제 진행이 실시간 표시되며, 완료 후
+  추출 폴더의 디렉토리 트리(폴더별 이미지 수)를 보여줍니다. 이 트리를 참고해
+  탭 1의 Source/Target 폴더 경로를 지정하면 됩니다.
+- gated/비공개 데이터셋이라 401/403이 나오면 HF 토큰 입력란을 사용하세요
+  (huggingface.co/settings/tokens). M4-SAR는 공개 데이터셋입니다.
+
+> 참고: M4-SAR는 512×512 optical(10m/60m)·SAR(VH/VV) 이미지로 구성된 대용량
+> 데이터셋입니다. 다운로드에 시간이 걸리며 Colab 디스크 용량을 확인하세요.
 
 ## 설치
 

@@ -5,3 +5,4 @@ tensorflow==2.15.1   # or tensorflow-cpu==2.15.1 for CPU-only / Colab CPU
 numpy
 matplotlib
 pillow
+requests          # M4-SAR dataset download (Colab)

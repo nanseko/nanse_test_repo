@@ -31,6 +31,11 @@ import traceback
 import gradio as gr
 
 
+# Colab is the only environment allowed to reach the external network for
+# dataset download. On a corporate intranet (non-Colab) the feature stays off.
+IN_COLAB = 'google.colab' in sys.modules
+
+
 # --------------------------------------------------------------------------- #
 # Configuration handling
 # --------------------------------------------------------------------------- #
@@ -89,6 +94,7 @@ DEFAULTS = {
 }
 
 IMAGE_EXTS = ('*.png', '*.jpg', '*.jpeg', '*.bmp', '*.tif', '*.tiff')
+IMAGE_EXTS_FLAT = ('.png', '.jpg', '.jpeg', '.bmp', '.tif', '.tiff')
 
 
 def load_config(path=DEFAULT_CONFIG_PATH):
@@ -330,6 +336,118 @@ def training_worker(cfg, state):
 
 
 # --------------------------------------------------------------------------- #
+# M4-SAR dataset download (Colab only)
+# --------------------------------------------------------------------------- #
+
+M4SAR_REPO = 'wchao0601/m4-sar'
+M4SAR_ZIP = 'M4-SAR.zip'
+
+
+def summarize_extracted(target_dir, max_depth=2):
+    """ Return a short folder tree of the extracted dataset with image counts. """
+    if not os.path.isdir(target_dir):
+        return '(추출 폴더가 없습니다.)'
+    lines = []
+    base = target_dir.rstrip(os.sep)
+    for root, dirs, files in os.walk(base):
+        depth = root[len(base):].count(os.sep)
+        if depth > max_depth:
+            dirs[:] = []
+            continue
+        dirs.sort()
+        imgs = [f for f in files if f.lower().endswith(IMAGE_EXTS_FLAT)]
+        indent = '  ' * depth
+        name = os.path.basename(root) or root
+        lines.append(f'{indent}{name}/  (이미지 {len(imgs)}개, 전체 {len(files)}개)')
+        if len(lines) > 200:
+            lines.append('  ...(생략)')
+            break
+    return '\n'.join(lines)
+
+
+def download_and_extract(repo_id, filename, target_dir, token, allow_non_colab):
+    """ Stream-download the dataset zip from HuggingFace and extract it.
+
+    Enabled only on Colab (external network). On a non-Colab intranet it is
+    refused unless the user explicitly ticks the override checkbox.
+    """
+    if not (IN_COLAB or allow_non_colab):
+        yield ('⛔ 비활성화됨: Colab 환경이 아닙니다.\n'
+               '사내망에서는 외부망 다운로드가 차단됩니다. '
+               'Colab에서 실행하거나, 외부망이 가능한 환경이라면 '
+               '"외부망 다운로드 강제 허용"을 체크하세요.')
+        return
+
+    import zipfile
+    try:
+        import requests
+    except Exception:
+        yield '오류: requests 패키지가 필요합니다. `pip install requests` 후 다시 시도하세요.'
+        return
+
+    repo_id = (repo_id or M4SAR_REPO).strip()
+    filename = (filename or M4SAR_ZIP).strip()
+    target_dir = (target_dir or './datasets/M4-SAR').strip()
+    os.makedirs(target_dir, exist_ok=True)
+    zip_path = os.path.join(target_dir, filename)
+
+    url = f'https://huggingface.co/datasets/{repo_id}/resolve/main/{filename}'
+    headers = {'Authorization': f'Bearer {token.strip()}'} if token and token.strip() else {}
+
+    yield f'다운로드 시작\n  repo : {repo_id}\n  file : {filename}\n  url  : {url}\n  대상 : {target_dir}'
+    try:
+        with requests.get(url, headers=headers, stream=True, timeout=60, allow_redirects=True) as r:
+            if r.status_code == 401 or r.status_code == 403:
+                yield (f'접근 거부(HTTP {r.status_code}). gated/비공개 데이터셋이면 '
+                       'HF 토큰을 입력하세요. (huggingface.co/settings/tokens)')
+                return
+            r.raise_for_status()
+            total = int(r.headers.get('Content-Length', 0))
+            done = 0
+            t0 = time.time()
+            last = 0.0
+            with open(zip_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=1 << 20):   # 1 MB
+                    if not chunk:
+                        continue
+                    f.write(chunk)
+                    done += len(chunk)
+                    now = time.time()
+                    if now - last > 1.0:
+                        last = now
+                        spd = done / max(now - t0, 1e-6) / 1e6
+                        if total:
+                            pct = done / total * 100
+                            yield (f'다운로드 중... {done/1e9:.2f} / {total/1e9:.2f} GB '
+                                   f'({pct:.1f}%)  {spd:.1f} MB/s')
+                        else:
+                            yield f'다운로드 중... {done/1e9:.2f} GB  {spd:.1f} MB/s'
+    except Exception as exc:
+        yield f'다운로드 실패: {exc}'
+        return
+
+    yield f'다운로드 완료 ({done/1e9:.2f} GB). 압축 해제 중...'
+    try:
+        with zipfile.ZipFile(zip_path) as z:
+            names = z.namelist()
+            n = len(names)
+            for i, member in enumerate(names):
+                z.extract(member, target_dir)
+                if i % 1000 == 0:
+                    yield f'압축 해제 중... {i}/{n}'
+    except zipfile.BadZipFile:
+        yield f'오류: 잘못된 zip 파일입니다 ({zip_path}). 다시 다운로드하세요.'
+        return
+    except Exception as exc:
+        yield f'압축 해제 실패: {exc}'
+        return
+
+    tree = summarize_extracted(target_dir)
+    yield ('✅ 완료. 아래 폴더 구조를 참고해 "탭 1"에서 Source/Target 경로를 지정하세요.\n'
+           f'추출 위치: {target_dir}\n\n{tree}')
+
+
+# --------------------------------------------------------------------------- #
 # UI callbacks
 # --------------------------------------------------------------------------- #
 
@@ -424,6 +542,40 @@ def build_ui():
                     '각 탭에서 값을 수정하고 **저장** 버튼을 누르면 `gui_config.json`에 보존됩니다.')
 
         cfg_path = gr.Textbox(value=DEFAULT_CONFIG_PATH, label='설정 파일 경로 (config json)')
+
+        env_txt = ('🟢 Colab 환경 감지됨 — 데이터셋 다운로드 사용 가능'
+                   if IN_COLAB else
+                   '🔒 비-Colab 환경 — 외부망 차단 가정으로 데이터셋 다운로드 기본 비활성화')
+        gr.Markdown(f'**실행 환경:** {env_txt}')
+
+        # ---- Tab 0 : M4-SAR dataset download (Colab only) -------------- #
+        with gr.Tab('0. 데이터셋 다운로드 (M4-SAR · Colab 전용)'):
+            gr.Markdown(
+                'HuggingFace `wchao0601/m4-sar` 에서 **M4-SAR.zip** 을 받아 압축을 풉니다.\n\n'
+                '- **Colab 환경에서만** 기본 활성화됩니다.\n'
+                '- 사내망(비-Colab)에서는 외부망 차단을 가정해 비활성화됩니다. '
+                '외부망이 가능한 환경이라면 아래 "강제 허용"을 체크하세요.')
+            ds_override = gr.Checkbox(
+                value=False,
+                label='외부망 다운로드 강제 허용 (사내망에서는 체크하지 마세요)',
+                visible=not IN_COLAB)
+            with gr.Row():
+                ds_repo = gr.Textbox(M4SAR_REPO, label='HF dataset repo_id')
+                ds_file = gr.Textbox(M4SAR_ZIP, label='zip 파일명')
+            ds_target = gr.Textbox('./datasets/M4-SAR', label='압축 해제 대상 폴더')
+            ds_token = gr.Textbox('', label='HF 토큰 (gated/비공개일 때만)', type='password')
+            ds_btn = gr.Button('⬇️ 다운로드 + 압축 해제', variant='primary',
+                               interactive=IN_COLAB)
+            ds_out = gr.Textbox(label='진행 상황 / 결과', lines=14, interactive=False)
+
+            # Non-Colab: enable the button only when the override is ticked.
+            ds_override.change(
+                lambda v: gr.update(interactive=(IN_COLAB or bool(v))),
+                inputs=ds_override, outputs=ds_btn)
+            ds_btn.click(
+                download_and_extract,
+                inputs=[ds_repo, ds_file, ds_target, ds_token, ds_override],
+                outputs=ds_out)
 
         # ---- Tab 1 : Data folders -------------------------------------- #
         with gr.Tab('1. 데이터 폴더 (Input / Output)'):

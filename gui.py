@@ -743,6 +743,101 @@ def stop_training():
     return 'ℹ️ 실행 중인 학습이 없습니다.'
 
 
+def run_inference(weights_dir, input_dir, output_dir, *cfg_values):
+    """ Load a trained checkpoint (pretrained weights) and translate test images.
+
+    The model architecture is rebuilt from the current config (Tabs 3/4) so it
+    MUST match the architecture used during training, then the latest checkpoint
+    in ``weights_dir`` is loaded and netG is run on each input image.
+    Yields (status_text, [result_image_paths]) for live updates + a gallery.
+    """
+    cfg = _cfg_from_values(cfg_values)
+    gallery = []
+
+    if not input_dir or not os.path.isdir(input_dir):
+        yield (f'오류: 입력 폴더가 없습니다: {input_dir}', gallery)
+        return
+    if not weights_dir or not os.path.isdir(weights_dir):
+        yield (f'오류: 가중치(체크포인트) 폴더가 없습니다: {weights_dir}', gallery)
+        return
+
+    files = list_images(input_dir)
+    if not files:
+        yield (f'오류: 입력 폴더에 이미지가 없습니다: {input_dir}', gallery)
+        return
+
+    output_dir = (output_dir or './output/test').strip()
+    os.makedirs(output_dir, exist_ok=True)
+
+    try:
+        import numpy as np
+        import tensorflow as tf
+        from PIL import Image
+
+        keras_ver = str(getattr(tf.keras, '__version__', '?'))
+        if keras_ver.startswith('3'):
+            yield ('오류: Keras 3 감지. `pip install tf-keras` 후 런타임 재시작이 필요합니다.', gallery)
+            return
+
+        from modules.cut_model import CUT_model
+
+        size = int(cfg['image_size'])
+        shape = (size, size, 3)
+        yield (f'모델 생성 중 (아키텍처는 탭 3/4 설정과 일치해야 합니다)...', gallery)
+
+        def make_model(impl_choice):
+            return CUT_model(
+                shape, shape,
+                cut_mode=cfg['mode'], gan_mode=cfg['gan_mode'],
+                use_antialias=bool(cfg['use_antialias']), norm_layer=cfg['norm_layer'],
+                resnet_blocks=int(cfg['resnet_blocks']), netF_units=int(cfg['netF_units']),
+                netF_num_patches=int(cfg['netF_num_patches']), nce_temp=float(cfg['nce_temp']),
+                impl=impl_choice,
+                attention_type=cfg['attention_type'], attention_reduction=int(cfg['attention_reduction']),
+                attention_encoder=bool(cfg['attention_encoder']),
+                attention_resblocks=bool(cfg['attention_resblocks']),
+                attention_decoder=bool(cfg['attention_decoder']))
+
+        try:
+            cut = make_model(cfg['impl'])
+        except Exception as exc:
+            if cfg['impl'] == 'cuda':
+                cut = make_model('ref')
+            else:
+                raise
+
+        latest = tf.train.latest_checkpoint(weights_dir)
+        if latest is None:
+            yield (f'오류: {weights_dir} 에서 체크포인트를 찾지 못했습니다.', gallery)
+            return
+        cut.load_weights(latest).expect_partial()
+        yield (f'가중치 로드 완료: {latest}\n추론 시작 ({len(files)}장)...', gallery)
+
+        def load_one(path):
+            img = tf.io.read_file(path)
+            img = tf.image.decode_image(img, channels=3, expand_animations=False)
+            img = (tf.cast(img, tf.float32) / 127.5) - 1.0
+            img = tf.image.resize(img, (size, size))
+            return tf.expand_dims(img, 0)
+
+        for i, path in enumerate(files):
+            src = load_one(path)
+            pred = cut.netG(src, training=False)[0].numpy()
+            pred = np.clip(pred * 127.5 + 127.5, 0, 255).astype(np.uint8)
+            name = os.path.splitext(os.path.basename(path))[0]
+            out_path = os.path.join(output_dir, f'{name}_translated.png')
+            Image.fromarray(pred).save(out_path)
+            gallery.append(out_path)
+            if (i + 1) % 5 == 0 or i == 0 or i == len(files) - 1:
+                yield (f'추론 중... {i+1}/{len(files)}  현재: {os.path.basename(path)}',
+                       gallery[-12:])
+
+        yield (f'✅ 완료: {len(files)}장 변환 → {output_dir}', gallery[-12:])
+
+    except Exception:
+        yield ('추론 중 예외 발생:\n' + traceback.format_exc(), gallery[-12:])
+
+
 # --------------------------------------------------------------------------- #
 # Build the Gradio UI
 # --------------------------------------------------------------------------- #
@@ -924,6 +1019,23 @@ def build_ui():
                             inputs=[cfg_path] + ordered_inputs,
                             outputs=monitor_outputs)
             stop_btn.click(stop_training, outputs=st_msg)
+
+        # ---- Tab 6 : Inference / Test (pretrained) --------------------- #
+        with gr.Tab('6. 추론 / 테스트 (pretrained)'):
+            gr.Markdown(
+                '학습으로 저장된 **체크포인트(pretrained 가중치)** 를 불러와 테스트 이미지를 바로 변환합니다.\n\n'
+                '- 체크포인트는 학습 시 `출력폴더/checkpoints` 에 `save_n_epoch` 마다 저장됩니다.\n'
+                '- ⚠️ **탭 3/4의 CUT·Attention 설정이 학습 때와 동일**해야 가중치가 올바르게 로드됩니다.')
+            inf_weights = gr.Textbox('./output/checkpoints', label='가중치(체크포인트) 폴더')
+            inf_input = gr.Textbox('./datasets/SAR/testA', label='입력 이미지 폴더 (Source)')
+            inf_output = gr.Textbox('./output/test', label='변환 결과 저장 폴더')
+            inf_btn = gr.Button('▶ 추론 실행', variant='primary')
+            inf_status = gr.Textbox(label='진행 상황', lines=4, interactive=False)
+            inf_gallery = gr.Gallery(label='변환 결과 (미리보기)', columns=4, height='auto')
+
+            inf_btn.click(run_inference,
+                          inputs=[inf_weights, inf_input, inf_output] + ordered_inputs,
+                          outputs=[inf_status, inf_gallery])
 
     return demo
 

@@ -447,6 +447,121 @@ def download_and_extract(repo_id, filename, target_dir, token, allow_non_colab):
            f'추출 위치: {target_dir}\n\n{tree}')
 
 
+def organize_m4sar_to_cut(source_root, out_dir, sar_kw, opt_kw, link_mode, test_ratio):
+    """ Reorganize an extracted dataset into CUT layout.
+
+    Walks ``source_root``, classifies each image as SAR (domain A / source) or
+    optical (domain B / target) by path keywords, and as train/test, then
+    builds <out_dir>/{trainA,trainB,testA,testB} via symlink (default) or copy.
+
+    CUT is unpaired (A and B are shuffled independently), so exact pair
+    alignment is not required; files are given unique names to avoid clashes.
+
+    Yields progress strings plus gr.update() values that auto-fill the four
+    training folder paths on completion.
+    """
+    import shutil
+    import random
+
+    blank = [gr.update(), gr.update(), gr.update(), gr.update()]
+
+    if not source_root or not os.path.isdir(source_root):
+        yield (f'오류: 소스 폴더가 없습니다: {source_root}', *blank)
+        return
+
+    sar_keys = [k.strip().lower() for k in (sar_kw or '').split(',') if k.strip()]
+    opt_keys = [k.strip().lower() for k in (opt_kw or '').split(',') if k.strip()]
+    if not sar_keys or not opt_keys:
+        yield ('SAR / Optical 키워드를 모두 입력하세요.', *blank)
+        return
+
+    out_dir = (out_dir or './datasets/M4-SAR-cut').strip()
+
+    yield ('소스 폴더 스캔 중...', *blank)
+    items = []  # (abs_path, domain 'A'/'B', split 'train'/'test')
+    for root, _, files in os.walk(source_root):
+        rel = os.path.relpath(root, source_root).lower()
+        for f in files:
+            if not f.lower().endswith(IMAGE_EXTS_FLAT):
+                continue
+            hay = rel + '/' + f.lower()
+            if any(k in hay for k in sar_keys):
+                domain = 'A'
+            elif any(k in hay for k in opt_keys):
+                domain = 'B'
+            else:
+                continue
+            if 'test' in hay or 'val' in hay or 'valid' in hay:
+                split = 'test'
+            else:
+                split = 'train'
+            items.append((os.path.join(root, f), domain, split))
+
+    if not items:
+        yield ('분류된 이미지가 없습니다. SAR/Optical 키워드 또는 소스 경로를 확인하세요.', *blank)
+        return
+
+    # If no explicit test split exists, optionally carve one out per domain.
+    has_test = any(s == 'test' for _, _, s in items)
+    try:
+        test_ratio = float(test_ratio)
+    except (TypeError, ValueError):
+        test_ratio = 0.0
+    if not has_test and test_ratio > 0:
+        for dom in ('A', 'B'):
+            idxs = [i for i, (_, d, _) in enumerate(items) if d == dom]
+            random.shuffle(idxs)
+            k = int(len(idxs) * test_ratio)
+            for i in idxs[:k]:
+                p, d, _ = items[i]
+                items[i] = (p, d, 'test')
+
+    dests = {key: os.path.join(out_dir, key)
+             for key in ('trainA', 'trainB', 'testA', 'testB')}
+    for d in dests.values():
+        os.makedirs(d, exist_ok=True)
+
+    use_copy = (link_mode == 'copy')
+    counters = {}
+    counts = {'trainA': 0, 'trainB': 0, 'testA': 0, 'testB': 0}
+    total = len(items)
+    for n, (src, domain, split) in enumerate(items):
+        key = f'{split}{domain}'
+        idx = counters.get(key, 0)
+        counters[key] = idx + 1
+        dst = os.path.join(dests[key], f'{idx:06d}_{os.path.basename(src)}')
+        try:
+            if os.path.exists(dst) or os.path.islink(dst):
+                pass
+            elif use_copy:
+                shutil.copy2(src, dst)
+            else:
+                os.symlink(os.path.abspath(src), dst)
+            counts[key] += 1
+        except OSError:
+            # symlink may be unsupported (e.g. Windows without privilege) -> copy
+            try:
+                shutil.copy2(src, dst)
+                counts[key] += 1
+            except Exception:
+                pass
+        if (n + 1) % 5000 == 0:
+            yield (f'정리 중... {n+1}/{total}  {counts}', *blank)
+
+    summary = (f'✅ CUT 형식 정리 완료 ({"복사" if use_copy else "심볼릭 링크"})\n'
+               f'출력 폴더: {out_dir}\n'
+               f'  trainA (SAR)     : {counts["trainA"]}장\n'
+               f'  trainB (Optical) : {counts["trainB"]}장\n'
+               f'  testA  (SAR)     : {counts["testA"]}장\n'
+               f'  testB  (Optical) : {counts["testB"]}장\n'
+               '아래 탭 1 경로가 자동으로 채워졌습니다.')
+    yield (summary,
+           gr.update(value=dests['trainA']),
+           gr.update(value=dests['trainB']),
+           gr.update(value=dests['testA']),
+           gr.update(value=dests['testB']))
+
+
 # --------------------------------------------------------------------------- #
 # UI callbacks
 # --------------------------------------------------------------------------- #
@@ -577,6 +692,22 @@ def build_ui():
                 inputs=[ds_repo, ds_file, ds_target, ds_token, ds_override],
                 outputs=ds_out)
 
+            gr.Markdown('---\n### CUT 형식으로 정리 (trainA/trainB/testA/testB)\n'
+                        '추출된 폴더를 SAR=Source(A), Optical=Target(B)로 자동 분류해 '
+                        'CUT 학습 폴더 구조로 만듭니다. 경로 키워드로 도메인/split을 판별합니다.')
+            with gr.Row():
+                org_src = gr.Textbox('./datasets/M4-SAR', label='정리할 소스(추출) 폴더')
+                org_out = gr.Textbox('./datasets/M4-SAR-cut', label='CUT 출력 폴더')
+            with gr.Row():
+                org_sar_kw = gr.Textbox('sar,vh,vv', label='SAR(Source/A) 키워드')
+                org_opt_kw = gr.Textbox('optical,opt,rgb,vis,visible', label='Optical(Target/B) 키워드')
+            with gr.Row():
+                org_mode = gr.Radio(['symlink', 'copy'], value='symlink',
+                                    label='파일 처리 (대용량은 symlink 권장)')
+                org_ratio = gr.Number(0.1, label='test 폴더 없을 때 분리 비율 (0=안함)')
+            org_btn = gr.Button('🗂️ CUT 형식으로 정리', variant='primary')
+            org_out_box = gr.Textbox(label='정리 결과', lines=8, interactive=False)
+
         # ---- Tab 1 : Data folders -------------------------------------- #
         with gr.Tab('1. 데이터 폴더 (Input / Output)'):
             comp['train_src_dir'] = gr.Textbox(cfg['train_src_dir'], label='입력 Train Source 폴더 (예: SAR/trainA)')
@@ -659,6 +790,13 @@ def build_ui():
         save_basic.click(do_save, inputs=[cfg_path] + ordered_inputs, outputs=save_basic_out)
         save_cut.click(do_save, inputs=[cfg_path] + ordered_inputs, outputs=save_cut_out)
         save_att.click(do_save, inputs=[cfg_path] + ordered_inputs, outputs=save_att_out)
+
+        # Organize button (Tab 0) auto-fills the Tab 1 folder paths on completion.
+        org_btn.click(
+            organize_m4sar_to_cut,
+            inputs=[org_src, org_out, org_sar_kw, org_opt_kw, org_mode, org_ratio],
+            outputs=[org_out_box, comp['train_src_dir'], comp['train_tar_dir'],
+                     comp['test_src_dir'], comp['test_tar_dir']])
 
         # ---- Tab 5 : Train & Monitor ----------------------------------- #
         with gr.Tab('5. 학습 실행 / 모니터링'):

@@ -651,7 +651,7 @@ def build_ui():
     cfg = load_config()
     comp = {}
 
-    with gr.Blocks(title='CUT + Attention 학습 GUI') as demo:
+    with gr.Blocks(title='CUT + Attention 학습 GUI', theme=gr.themes.Soft()) as demo:
         gr.Markdown('# CUT + Attention 학습 GUI\n'
                     'SAR-to-Optical CUT 모델을 폴더 지정만으로 학습합니다. '
                     '각 탭에서 값을 수정하고 **저장** 버튼을 누르면 `gui_config.json`에 보존됩니다.')
@@ -835,7 +835,7 @@ def main():
     share = args.share or in_colab
 
     demo = build_ui()
-    demo.queue().launch(share=share, server_port=args.port, theme=gr.themes.Soft())
+    demo.queue().launch(share=share, server_port=args.port)
 
 
 if __name__ == '__main__':

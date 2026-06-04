@@ -280,25 +280,40 @@ def training_worker(cfg, state):
 
         size = int(cfg['image_size'])
         shape = (size, size, 3)
-        cut = CUT_model(
-            shape, shape,
-            cut_mode=cfg['mode'],
-            gan_mode=cfg['gan_mode'],
-            use_antialias=bool(cfg['use_antialias']),
-            norm_layer=cfg['norm_layer'],
-            resnet_blocks=int(cfg['resnet_blocks']),
-            netF_units=int(cfg['netF_units']),
-            netF_num_patches=int(cfg['netF_num_patches']),
-            nce_temp=float(cfg['nce_temp']),
-            impl=cfg['impl'],
-            attention_type=cfg['attention_type'],
-            attention_reduction=int(cfg['attention_reduction']),
-            attention_encoder=bool(cfg['attention_encoder']),
-            attention_resblocks=bool(cfg['attention_resblocks']),
-            attention_decoder=bool(cfg['attention_decoder']),
-            lambda_grad=float(cfg['lambda_grad']),
-            lambda_color=float(cfg['lambda_color']),
-        )
+
+        def make_model(impl_choice):
+            return CUT_model(
+                shape, shape,
+                cut_mode=cfg['mode'],
+                gan_mode=cfg['gan_mode'],
+                use_antialias=bool(cfg['use_antialias']),
+                norm_layer=cfg['norm_layer'],
+                resnet_blocks=int(cfg['resnet_blocks']),
+                netF_units=int(cfg['netF_units']),
+                netF_num_patches=int(cfg['netF_num_patches']),
+                nce_temp=float(cfg['nce_temp']),
+                impl=impl_choice,
+                attention_type=cfg['attention_type'],
+                attention_reduction=int(cfg['attention_reduction']),
+                attention_encoder=bool(cfg['attention_encoder']),
+                attention_resblocks=bool(cfg['attention_resblocks']),
+                attention_decoder=bool(cfg['attention_decoder']),
+                lambda_grad=float(cfg['lambda_grad']),
+                lambda_color=float(cfg['lambda_color']),
+            )
+
+        try:
+            cut = make_model(cfg['impl'])
+        except Exception as exc:
+            # The StyleGAN2 'cuda' custom op needs an exact nvcc/TF-header match
+            # and fails on Colab (ABI mismatch). Fall back to pure-TF 'ref' ops.
+            if cfg['impl'] == 'cuda':
+                state.log(f"'cuda' 커스텀 연산 로드 실패 ({type(exc).__name__}). "
+                          "순수 TensorFlow 연산('ref')으로 자동 전환합니다. "
+                          "Colab에서는 'ref' 사용을 권장합니다.")
+                cut = make_model('ref')
+            else:
+                raise
 
         lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(
             initial_learning_rate=float(cfg['lr']),
@@ -785,7 +800,8 @@ def build_ui():
             with gr.Row():
                 comp['gan_mode'] = gr.Dropdown(['lsgan', 'nonsaturating'], value=cfg['gan_mode'], label='gan_mode')
                 comp['norm_layer'] = gr.Dropdown(['instance', 'batch'], value=cfg['norm_layer'], label='norm_layer')
-                comp['impl'] = gr.Dropdown(['ref', 'cuda'], value=cfg['impl'], label='impl (antialias op)')
+                comp['impl'] = gr.Dropdown(['ref', 'cuda'], value=cfg['impl'],
+                                          label='impl (antialias op) — Colab은 ref 권장 (cuda는 커스텀 빌드 필요)')
             with gr.Row():
                 comp['resnet_blocks'] = gr.Number(cfg['resnet_blocks'], label='resnet_blocks', precision=0)
                 comp['netF_units'] = gr.Number(cfg['netF_units'], label='netF_units', precision=0)

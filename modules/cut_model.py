@@ -13,7 +13,7 @@ from tensorflow.keras.layers import Input, Dense, Lambda
 
 from modules.attention import CBAM, CoordinateAttention
 from modules.layers import ConvBlock, ConvTransposeBlock, ResBlock, AntialiasSampling, Padding2D
-from modules.losses import GANLoss, PatchNCELoss
+from modules.losses import GANLoss, PatchNCELoss, gradient_loss, color_moment_loss
 
 
 def maybe_attention(x, attention_type, attention_reduction, name=None):
@@ -235,6 +235,8 @@ class CUT_model(Model):
                  attention_encoder=False,
                  attention_resblocks=False,
                  attention_decoder=False,
+                 lambda_grad=0.0,
+                 lambda_color=0.0,
                  **kwargs):
         assert cut_mode in ['cut', 'fastcut']
         assert gan_mode in ['lsgan', 'nonsaturating']
@@ -244,8 +246,12 @@ class CUT_model(Model):
         assert impl in ['ref', 'cuda']
         assert attention_type in ['none', 'cbam', 'coord']
         assert attention_reduction > 0
+        assert lambda_grad >= 0
+        assert lambda_color >= 0
         super(CUT_model, self).__init__(self, **kwargs)
 
+        self.lambda_grad = lambda_grad
+        self.lambda_color = lambda_color
         self.gan_mode = gan_mode
         self.nce_temp = nce_temp
         if nce_layers is None:
@@ -317,6 +323,12 @@ class CUT_model(Model):
                 NCE_loss = (NCE_loss + NCE_B_loss) * 0.5
 
             G_loss += NCE_loss
+
+            """Optional structure / color regularization (lambda=0 disables)."""
+            if self.lambda_grad > 0:
+                G_loss += self.lambda_grad * gradient_loss(real_A, fake_B)
+            if self.lambda_color > 0 and self.use_nce_identity:
+                G_loss += self.lambda_color * color_moment_loss(idt_B, real_B)
 
         D_loss_grads = tape.gradient(D_loss, self.netD.trainable_variables)
         self.D_optimizer.apply_gradients(zip(D_loss_grads, self.netD.trainable_variables))

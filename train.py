@@ -40,6 +40,8 @@ def ArgParse():
     parser.add_argument('--attention_encoder', help='Apply attention after generator encoder ConvBlocks', action='store_true')
     parser.add_argument('--attention_resblocks', help='Apply attention inside generator ResBlocks', action='store_true')
     parser.add_argument('--attention_decoder', help='Apply attention after generator decoder upsampling blocks', action='store_true')
+    parser.add_argument('--lambda_grad', help='Weight for structure-preservation gradient loss (0 disables)', type=float, default=0.0)
+    parser.add_argument('--lambda_color', help='Weight for identity color-consistency loss (0 disables)', type=float, default=0.0)
 
     args = parser.parse_args()
 
@@ -79,7 +81,9 @@ def main(args):
                     attention_reduction=args.attention_reduction,
                     attention_encoder=args.attention_encoder,
                     attention_resblocks=args.attention_resblocks,
-                    attention_decoder=args.attention_decoder)
+                    attention_decoder=args.attention_decoder,
+                    lambda_grad=args.lambda_grad,
+                    lambda_color=args.lambda_color)
 
     # Define learning rate schedule
     lr_schedule = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=args.lr,

@@ -33,7 +33,23 @@ import gradio as gr
 
 # Colab is the only environment allowed to reach the external network for
 # dataset download. On a corporate intranet (non-Colab) the feature stays off.
-IN_COLAB = 'google.colab' in sys.modules
+def _detect_colab():
+    # Works even when launched as a subprocess (`!python gui.py`), where
+    # 'google.colab' is not yet imported into sys.modules.
+    if 'google.colab' in sys.modules:
+        return True
+    if os.environ.get('COLAB_RELEASE_TAG') or os.environ.get('COLAB_GPU'):
+        return True
+    try:
+        import importlib.util
+        if importlib.util.find_spec('google.colab') is not None:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+IN_COLAB = _detect_colab()
 
 
 # --------------------------------------------------------------------------- #
@@ -827,12 +843,18 @@ def build_ui():
 def main():
     parser = argparse.ArgumentParser(description='CUT + Attention training GUI')
     parser.add_argument('--share', action='store_true', help='Force a public share link')
+    parser.add_argument('--no-share', action='store_true', help='Disable share link')
     parser.add_argument('--port', type=int, default=7860, help='Server port')
     args = parser.parse_args()
 
-    # Colab benefits from an automatic share link
-    in_colab = 'google.colab' in sys.modules
-    share = args.share or in_colab
+    # Colab cannot reach the VM's 127.0.0.1 from the browser, so a public
+    # share link is required there.
+    share = (args.share or IN_COLAB) and not args.no_share
+
+    if IN_COLAB:
+        print('\n[gui] Colab 감지됨. 아래 출력의 공개 URL '
+              '(https://XXXX.gradio.live) 을 클릭하세요. '
+              '127.0.0.1 / localhost 는 Colab에서 접속되지 않습니다.\n')
 
     demo = build_ui()
     demo.queue().launch(share=share, server_port=args.port)

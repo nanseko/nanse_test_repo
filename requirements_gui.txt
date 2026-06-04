@@ -1,0 +1,8 @@
+# GUI dependencies for gui.py
+# This codebase targets TensorFlow 2.15 (Keras 2); TF 2.16+ (Keras 3) is not compatible.
+gradio>=4.0
+tensorflow==2.15.1   # or tensorflow-cpu==2.15.1 for CPU-only / Colab CPU
+numpy
+matplotlib
+pillow
+requests          # M4-SAR dataset download (Colab)

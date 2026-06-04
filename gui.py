@@ -20,6 +20,18 @@ On Colab just run `!python gui.py` (share link is automatic).
 
 import os
 import sys
+
+# This codebase targets the Keras 2 API. Modern Colab ships TensorFlow 2.16+
+# with Keras 3, which breaks Keras-2 idioms (Model subclassing, save_weights
+# naming, etc.). When the `tf-keras` compatibility package is available, force
+# the legacy Keras 2 backend BEFORE TensorFlow is imported (TF is only imported
+# later, inside the training worker). We only set this when `tf_keras` exists,
+# because on TF 2.15 (Keras 2 is built-in) setting it without the package would
+# break `tf.keras`.
+import importlib.util as _ilu
+if _ilu.find_spec('tf_keras') is not None:
+    os.environ.setdefault('TF_USE_LEGACY_KERAS', '1')
+
 import json
 import glob
 import time
@@ -233,9 +245,21 @@ def _build_dataset(src_files, tar_files, image_size, batch_size):
 def training_worker(cfg, state):
     try:
         import tensorflow as tf
+
+        keras_ver = str(getattr(tf.keras, '__version__', '?'))
+        state.log(f'TensorFlow {tf.__version__}, Keras {keras_ver}')
+        if keras_ver.startswith('3'):
+            state.log('오류: Keras 3가 감지되었습니다. 이 코드는 Keras 2가 필요합니다. '
+                      'Colab에서 `pip install tf-keras` 실행 후 런타임을 재시작하고 '
+                      '다시 시도하세요. (gui.py가 TF_USE_LEGACY_KERAS=1 을 설정합니다.)')
+            with state.lock:
+                state.message = '오류: Keras 3 (tf-keras 설치 필요)'
+                state.running = False
+            return
+
         from modules.cut_model import CUT_model
 
-        state.log('TensorFlow 로딩 및 데이터셋 준비 중...')
+        state.log('데이터셋 준비 중...')
         src_files = list_images(cfg['train_src_dir'])
         tar_files = list_images(cfg['train_tar_dir'])
         if not src_files or not tar_files:

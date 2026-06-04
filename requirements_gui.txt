@@ -1,7 +1,11 @@
 # GUI dependencies for gui.py
-# This codebase targets TensorFlow 2.15 (Keras 2); TF 2.16+ (Keras 3) is not compatible.
+# This codebase targets the Keras 2 API.
+#  - On Python <=3.11 you can pin: tensorflow==2.15.1 (bundles Keras 2).
+#  - On modern Colab (Python 3.12, TF 2.16+/Keras 3) install `tf-keras` and the
+#    GUI sets TF_USE_LEGACY_KERAS=1 to use the Keras 2 API on top of new TF.
 gradio>=4.0
-tensorflow==2.15.1   # or tensorflow-cpu==2.15.1 for CPU-only / Colab CPU
+tensorflow            # any 2.x; on TF 2.16+ also install tf-keras below
+tf-keras              # Keras 2 compatibility layer for TF 2.16+ (Colab)
 numpy
 matplotlib
 pillow

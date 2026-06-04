@@ -248,7 +248,7 @@ class CUT_model(Model):
         assert attention_reduction > 0
         assert lambda_grad >= 0
         assert lambda_color >= 0
-        super(CUT_model, self).__init__(self, **kwargs)
+        super(CUT_model, self).__init__(**kwargs)
 
         self.lambda_grad = lambda_grad
         self.lambda_color = lambda_color

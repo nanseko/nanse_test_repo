@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CUT 학습 원리 — Loss · PatchNCE · Discriminator</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1d2740;
+    --ink:#e8edf7; --muted:#9fb0cc; --line:#2c3a5a;
+    --accent:#4f8cff; --green:#22c55e; --warn:#f59e0b; --pink:#ec4899; --orange:#f97316; --violet:#8b5cf6; --teal:#14b8a6;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{margin:0;background:linear-gradient(180deg,#0c111c,#0f1420 40%);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR","Malgun Gothic",sans-serif;line-height:1.7;font-size:16px;}
+  header{padding:52px 24px 38px;text-align:center;border-bottom:1px solid var(--line);
+    background:radial-gradient(1200px 400px at 50% -50%, rgba(79,140,255,.25), transparent);}
+  header h1{font-size:2rem;margin:0 0 10px;letter-spacing:-.5px;}
+  header p{color:var(--muted);margin:6px auto;max-width:780px;}
+  .badge{display:inline-block;background:var(--accent);color:#06122c;font-weight:700;padding:3px 12px;border-radius:999px;font-size:.78rem;margin-bottom:14px;}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 24px 80px;}
+  nav{position:sticky;top:0;z-index:20;background:rgba(12,17,28,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:10px 24px;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+  nav a{color:var(--muted);text-decoration:none;font-size:.84rem;padding:5px 11px;border-radius:8px;}
+  nav a:hover{color:#fff;background:var(--panel2);}
+  section{margin-top:52px;}
+  h2{font-size:1.5rem;border-left:4px solid var(--accent);padding-left:14px;margin:0 0 6px;}
+  h2 .num{color:var(--accent);font-weight:800;margin-right:8px;}
+  h3{font-size:1.15rem;margin:26px 0 8px;color:#dbe6ff;}
+  .lead{color:var(--muted);margin:0 0 16px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:16px 0;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;}
+  @media(max-width:820px){.grid2,.grid3{grid-template-columns:1fr;}}
+  code{background:#0d1426;border:1px solid var(--line);padding:1px 6px;border-radius:5px;font-size:.86em;color:#a7c4ff;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
+  pre{background:#0a0f1c;border:1px solid var(--line);border-radius:10px;padding:14px 16px;overflow:auto;font-size:.84rem;}
+  pre code{background:none;border:none;padding:0;color:#cbd6f0;}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:.92rem;}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top;}
+  th{background:var(--panel2);color:#dbe6ff;}
+  tr:nth-child(even) td{background:rgba(255,255,255,.02);}
+  .note{border-left:4px solid var(--warn);background:rgba(245,158,11,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;}
+  .key{border-left:4px solid var(--green);background:rgba(34,197,94,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;}
+  .bad{border-left:4px solid var(--pink);background:rgba(236,72,153,.10);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;}
+  .pill{display:inline-block;padding:2px 9px;border-radius:6px;font-size:.74rem;font-weight:700;border:1px solid;}
+  .pG{color:#bcd3ff;border-color:#3b6fd4;background:rgba(59,130,246,.14);}
+  .pD{color:#fdba74;border-color:#b45309;background:rgba(249,115,22,.16);}
+  .pF{color:#f9a8d4;border-color:#9d2667;background:rgba(236,72,153,.14);}
+  .pE{color:#d6c8ff;border-color:#7c3aed;background:rgba(139,92,246,.14);}
+  /* flow */
+  .flow{display:flex;flex-direction:column;align-items:center;gap:0;margin:6px 0;}
+  .fnode{position:relative;width:92%;max-width:600px;padding:10px 14px;border-radius:10px;text-align:center;font-size:.9rem;border:1.5px solid;background:var(--panel2);}
+  .fnode small{display:block;color:var(--muted);font-size:.74rem;margin-top:2px;}
+  .io{border-color:#64748b;background:#1b2336;}
+  .g{border-color:#3b82f6;background:rgba(59,130,246,.12);}
+  .d{border-color:var(--orange);background:rgba(249,115,22,.13);}
+  .f{border-color:var(--pink);background:rgba(236,72,153,.12);}
+  .arrow{width:2px;height:18px;background:#4a5a7e;position:relative;}
+  .arrow:after{content:"▼";position:absolute;bottom:-4px;left:-5px;color:#4a5a7e;font-size:.7rem;}
+  .step{display:flex;gap:12px;align-items:flex-start;margin:10px 0;}
+  .stepn{flex:0 0 30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:var(--accent);color:#06122c;font-size:.9rem;}
+  .grid-patch{display:grid;grid-template-columns:repeat(6,1fr);gap:3px;max-width:240px;margin:8px 0;}
+  .cellp{aspect-ratio:1;border-radius:3px;display:grid;place-items:center;font-size:.6rem;color:#0b1020;font-weight:700;}
+  footer{border-top:1px solid var(--line);margin-top:60px;padding:24px;text-align:center;color:var(--muted);font-size:.85rem;}
+  .legend span{margin-right:14px;font-size:.84rem;}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:middle;}
+</style>
+</head>
+<body>
+<header>
+  <div class="badge">CUT TRAINING INTERNALS</div>
+  <h1>CUT은 어떻게 학습하는가</h1>
+  <p>Generator(인코더–ResNet–디코더), Discriminator(PatchGAN), 그리고 PatchNCE가
+     <b>한 스텝 안에서 어떤 순서로 무엇을 업데이트하는지</b>, 각 loss의 의미와
+     "discriminator가 이미지를 통과시키는 기준"의 진짜 의미를 코드에 근거해 설명합니다.</p>
+  <p style="font-size:.85rem;">근거 코드: <code>modules/cut_model.py</code> · <code>modules/losses.py</code></p>
+</header>
+
+<nav>
+  <a href="#players">0. 등장 네트워크</a>
+  <a href="#flow">1. 전체 흐름</a>
+  <a href="#disc">2. Discriminator</a>
+  <a href="#gan">3. GAN loss</a>
+  <a href="#nce">4. PatchNCE</a>
+  <a href="#order">5. 업데이트 순서</a>
+  <a href="#threshold">6. "통과 기준"의 진실</a>
+  <a href="#stop">7. 언제 멈추나</a>
+</nav>
+
+<div class="wrap">
+
+<!-- 0 -->
+<section id="players">
+  <h2><span class="num">0</span>등장하는 4개의 네트워크</h2>
+  <p class="lead">CUT은 GAN 한 쌍(G, D)에 더해, PatchNCE를 위한 인코더(E)와 투영 MLP(F)를 함께 학습합니다.</p>
+  <div class="grid2">
+    <div class="card"><span class="pill pG">netG · Generator</span>
+      <p style="margin:8px 0 0;font-size:.92rem;">인코더–ResNet블록–디코더. 입력 SAR <code>real_A</code> → 가짜 optical <code>fake_B</code> 생성. <b>우리가 최종적으로 원하는 망.</b></p></div>
+    <div class="card"><span class="pill pD">netD · Discriminator</span>
+      <p style="margin:8px 0 0;font-size:.92rem;">PatchGAN. 입력 이미지가 <b>진짜 optical인지 가짜인지</b>를 패치 단위로 채점. G를 압박하는 "심판".</p></div>
+    <div class="card"><span class="pill pE">netE · Encoder</span>
+      <p style="margin:8px 0 0;font-size:.92rem;">독립 망이 아니라 <b>netG의 앞부분과 가중치를 공유</b>. Generator 중간 특징을 여러 층에서 뽑아내는 도구. (학습 대상 아님 — G와 함께 갱신됨)</p></div>
+    <div class="card"><span class="pill pF">netF · PatchSampleMLP</span>
+      <p style="margin:8px 0 0;font-size:.92rem;">중간 특징의 패치를 작은 2-layer MLP로 임베딩+정규화. PatchNCE 비교를 위한 <b>투영 헤드</b>. NCE loss로 갱신.</p></div>
+  </div>
+  <div class="key">핵심: <b>학습되는 파라미터는 G, D, F</b> 세 개입니다. E는 G의 일부라 따로 갱신되지 않습니다.</div>
+</section>
+
+<!-- 1 -->
+<section id="flow">
+  <h2><span class="num">1</span>한 스텝의 전체 데이터 흐름</h2>
+  <p class="lead">한 학습 스텝마다 SAR 한 장(<code>real_A</code>)과 optical 한 장(<code>real_B</code>)이 들어옵니다. (CUT은 unpaired라 둘은 무관한 장면)</p>
+  <div class="card">
+    <div class="flow">
+      <div class="fnode io">real_A (SAR) &nbsp; + &nbsp; real_B (optical) <small>입력 두 장</small></div>
+      <div class="arrow"></div>
+      <div class="fnode g">netG(real_A) → <b>fake_B</b> (가짜 optical) &nbsp;|&nbsp; netG(real_B) → <b>idt_B</b> (항등 출력)
+        <small>cut 모드는 real_A·real_B를 한 번에 넣어 fake_B와 idt_B를 동시에 생성</small></div>
+      <div class="arrow"></div>
+      <div class="grid2" style="width:100%;max-width:600px;">
+        <div class="fnode d" style="width:100%">netD가 fake_B, real_B를 채점 → <b>GAN loss</b><small>"진짜 같은가?"</small></div>
+        <div class="fnode f" style="width:100%">netE+netF가 real_A↔fake_B 패치 비교 → <b>PatchNCE loss</b><small>"내용이 보존됐는가?"</small></div>
+      </div>
+    </div>
+    <div class="note">두 loss는 <b>서로 다른 것을 책임</b>집니다. GAN loss는 "결과가 optical 도메인처럼 보이는가(스타일)", PatchNCE는 "입력의 구조·내용이 유지되는가(콘텐츠)". 이 둘이 함께 있어야 'SAR의 구조를 유지한 채 optical로 변환'이 됩니다.</div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="disc">
+  <h2><span class="num">2</span>Discriminator는 어떻게 동작하나 (PatchGAN)</h2>
+  <p class="lead">가장 큰 오해 포인트입니다. Discriminator는 "이미지 1장 = 진짜/가짜 한 개의 답"을 내지 않습니다.</p>
+  <div class="card">
+    <h3 style="margin-top:0;">스칼라가 아니라 "점수 격자"를 출력</h3>
+    <p>netD는 Conv를 거쳐 <b>N×N 격자</b>를 출력합니다. 각 칸은 입력 이미지의 한 <b>패치(약 70×70 영역, receptive field)</b>가 얼마나 진짜 같은지를 나타내는 값입니다. 즉 "이미지를 여러 패치로 나눠 각각 채점"합니다.</p>
+    <div class="legend" style="margin:6px 0;">
+      <span><span class="dot" style="background:#22c55e"></span>높음 = 진짜(real)에 가깝다고 판단</span>
+      <span><span class="dot" style="background:#ef4444"></span>낮음 = 가짜(fake)로 판단</span>
+    </div>
+    <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;">
+      <div>
+        <div style="font-size:.8rem;color:var(--muted)">real_B를 넣었을 때 (이상적 D)</div>
+        <div class="grid-patch" id="grid-real"></div>
+      </div>
+      <div>
+        <div style="font-size:.8rem;color:var(--muted)">fake_B를 넣었을 때 (이상적 D)</div>
+        <div class="grid-patch" id="grid-fake"></div>
+      </div>
+    </div>
+    <p style="font-size:.9rem;color:var(--muted)">이 코드의 출력 채널은 1이고 sigmoid가 없습니다(LSGAN). 즉 출력은 0~1 확률이 아니라 <b>실수 점수</b>이며, 학습이 "진짜=1, 가짜=0"에 가까워지도록 회귀시킵니다.</p>
+    <pre><code># Discriminator: Conv 스택으로 다운샘플 후 1채널 점수맵 출력
+x = ConvBlock(64,4,strides=2)(inputs) → 128 → 256 → 512
+outputs = ConvBlock(1, 4)(x)          # (N, n, n, 1) 점수 격자, 활성화 없음</code></pre>
+  </div>
+  <div class="key"><b>왜 패치 단위?</b> 전체 이미지 1개 점수보다, 국소 텍스처의 진짜다움을 패치별로 따지는 편이 고주파 디테일(질감) 품질을 잘 끌어올립니다. 파라미터도 적고 임의 크기 이미지에 적용 가능합니다.</div>
+</section>
+
+<!-- 3 -->
+<section id="gan">
+  <h2><span class="num">3</span>GAN loss — D와 G의 줄다리기 (LSGAN)</h2>
+  <p class="lead">이 구현은 LSGAN(최소제곱)을 씁니다. 즉 점수와 목표값(1 또는 0)의 <b>평균제곱오차(MSE)</b>입니다.</p>
+  <div class="grid2">
+    <div class="card"><span class="pill pD">Discriminator 목표</span>
+      <pre><code>D_real_loss = MSE(1, D(real_B))   # 진짜는 1로
+D_fake_loss = MSE(0, D(fake_B))   # 가짜는 0으로
+D_loss = (D_real_loss + D_fake_loss) * 0.5</code></pre>
+      <p style="font-size:.9rem;">D는 <b>진짜를 1, 가짜를 0</b>으로 밀어내려 합니다. → 가짜를 잘 골라내도록 학습.</p>
+    </div>
+    <div class="card"><span class="pill pG">Generator 목표</span>
+      <pre><code>G_gan_loss = MSE(1, D(fake_B))    # 가짜를 1로 '속이려'</code></pre>
+      <p style="font-size:.9rem;">G는 자기가 만든 가짜에 대해 D가 <b>1(진짜)이라고 답하게</b> 만들려 합니다. → 더 진짜 같은 이미지를 생성.</p>
+    </div>
+  </div>
+  <div class="bad"><b>적대(adversarial) 관계:</b> 같은 <code>D(fake_B)</code>를 두고 D는 0으로, G는 1로 끌어당깁니다. 한쪽이 좋아지면 다른 쪽 loss가 올라가는 <b>제로섬 줄다리기</b>입니다. 그래서 "loss가 0으로 수렴"하지 않습니다(6장에서 상술).</div>
+</section>
+
+<!-- 4 -->
+<section id="nce">
+  <h2><span class="num">4</span>PatchNCE loss — 내용 보존을 강제하는 대조 학습</h2>
+  <p class="lead">GAN만 있으면 "optical처럼 보이지만 입력과 무관한 그림"이 나올 수 있습니다. PatchNCE가 <b>입력의 구조를 출력이 따라가도록</b> 묶어줍니다.</p>
+  <div class="card">
+    <h3 style="margin-top:0;">아이디어: "같은 위치 패치는 가깝게, 다른 위치는 멀게"</h3>
+    <p>입력 <code>real_A</code>와 출력 <code>fake_B</code>를 각각 netE로 통과시켜 여러 층의 중간 특징을 얻고, 같은 공간 위치의 패치를 뽑습니다.</p>
+    <ul style="margin:6px 0;">
+      <li><b>Query</b>: 출력(fake_B)의 어떤 위치 패치</li>
+      <li><b>Positive(양성)</b>: 입력(real_A)의 <b>같은 위치</b> 패치 — 가까워야 함</li>
+      <li><b>Negatives(음성)</b>: 입력의 <b>다른 위치</b> 패치들 — 멀어야 함</li>
+    </ul>
+    <p>이를 InfoNCE(소프트맥스 교차엔트로피)로 학습합니다. 즉 "query가 자기 짝(positive)을 N개 후보 중에서 골라내는 분류 문제"로 만듭니다.</p>
+    <pre><code># losses.py 핵심
+logit = (feat_fake · feat_realᵀ) / temperature   # 유사도 행렬
+# 대각선 = positive(같은 위치), 나머지 = negative
+loss = CrossEntropy(target=대각선=1, logit)        # 대각선이 커지도록</code></pre>
+    <div class="grid3" style="margin-top:8px;">
+      <div class="card" style="margin:0;"><b>여러 층에서</b><br><span style="color:var(--muted);font-size:.88rem;">nce_layers(인코더~ResNet 초반)의 여러 특징에서 동시에 계산해 합산 → 저수준~고수준 내용 모두 보존</span></div>
+      <div class="card" style="margin:0;"><b>temperature</b><br><span style="color:var(--muted);font-size:.88rem;"><code>0.07</code>. 작을수록 positive/negative 구분을 더 날카롭게(어렵게) 만듦</span></div>
+      <div class="card" style="margin:0;"><b>netF의 역할</b><br><span style="color:var(--muted);font-size:.88rem;">패치를 MLP로 임베딩+L2정규화해 코사인 유사도 비교가 의미 있게 만듦</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0;">Identity NCE (cut 모드)</h3>
+    <p style="font-size:.92rem;">추가로 <code>real_B → idt_B</code> 에 대해서도 NCE를 겁니다. optical을 넣으면 거의 그대로 나와야 하므로, 이는 <b>색·내용을 함부로 바꾸지 않게</b> 하는 정규화입니다. 최종 <code>NCE_loss = (NCE(real_A,fake_B) + NCE(real_B,idt_B)) / 2</code>.</p>
+  </div>
+  <div class="key"><b>PatchNCE는 "통과/탈락" 판정이 아닙니다.</b> 매 스텝 조금씩 낮아지도록 minimize되는 연속 값이며, 낮을수록 입력↔출력 위치 대응이 또렷하다는 뜻입니다. 특정 임계값을 넘기면 끝나는 게 아닙니다.</div>
+</section>
+
+<!-- 5 -->
+<section id="order">
+  <h2><span class="num">5</span>한 스텝 안의 업데이트 순서 (코드 그대로)</h2>
+  <p class="lead">하나의 <code>tf.GradientTape</code>로 모든 loss를 계산한 뒤, <b>D → G → F</b> 순서로 각자의 파라미터만 갱신합니다.</p>
+  <div class="card">
+    <div class="step"><div class="stepn">1</div><div><b>순전파</b> — <code>fake = netG(real)</code> 로 fake_B, idt_B 생성</div></div>
+    <div class="step"><div class="stepn">2</div><div><b>D loss 계산</b> — D(fake_B)는 0으로, D(real_B)는 1로 (MSE)</div></div>
+    <div class="step"><div class="stepn">3</div><div><b>G loss 계산</b> — GAN(가짜를 1로) + PatchNCE(+ identity NCE)(+옵션 grad/color)</div></div>
+    <div class="step"><div class="stepn">4</div><div><span class="pill pD">D 갱신</span> <code>D_grads = tape.gradient(D_loss, netD.vars)</code> → D optimizer</div></div>
+    <div class="step"><div class="stepn">5</div><div><span class="pill pG">G 갱신</span> <code>G_grads = tape.gradient(G_loss, netG.vars)</code> → G optimizer</div></div>
+    <div class="step"><div class="stepn">6</div><div><span class="pill pF">F 갱신</span> <code>F_grads = tape.gradient(NCE_loss, netF.vars)</code> → F optimizer</div></div>
+  </div>
+  <table>
+    <tr><th>업데이트 대상</th><th>사용하는 loss</th><th>역할</th></tr>
+    <tr><td><span class="pill pD">netD</span></td><td>D_loss (GAN, real+fake)</td><td>진짜/가짜 더 잘 구분</td></tr>
+    <tr><td><span class="pill pG">netG</span></td><td>G_loss = GAN + NCE (+grad+color)</td><td>더 진짜같고 내용 보존된 이미지 생성</td></tr>
+    <tr><td><span class="pill pF">netF</span></td><td>NCE_loss</td><td>대조 학습에 좋은 패치 임베딩 학습</td></tr>
+  </table>
+  <div class="note">중요: <b>각 loss는 자기 네트워크만 갱신</b>합니다. 예컨대 NCE_loss의 그래디언트는 G와 F로 흐르지만, D_loss는 D만 바꿉니다. 그래서 "G가 D를 직접 학습시키는" 일은 없습니다 — 서로 독립적으로 자기 목표만 최적화합니다.</div>
+</section>
+
+<!-- 6 -->
+<section id="threshold">
+  <h2><span class="num">6</span>"loss가 어느 값 이하면 D가 통과시킨다"? — 그런 임계값은 없습니다</h2>
+  <p class="lead">질문 주신 핵심 오해를 바로잡는 부분입니다.</p>
+  <div class="bad">
+    <b>GAN에는 "이 값 이하면 완성" 같은 고정 임계값이나 합격선이 없습니다.</b>
+    Discriminator는 <b>고정된 시험관이 아니라, G와 동시에 계속 강해지는 상대</b>입니다.
+    G가 좋아지면 D도 더 깐깐해지므로, "특정 loss에 도달하면 D가 pass" 하는 종료 조건이 성립하지 않습니다.
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0;">그럼 무엇을 향해 가나? — 내쉬 균형(Nash equilibrium)</h3>
+    <p>이론적 이상점은 "G가 만든 가짜가 진짜와 구분 불가"가 되어, D가 어느 패치든 <b>확신하지 못하는</b> 상태입니다.</p>
+    <ul>
+      <li>LSGAN에서 이상적 균형의 D 출력은 진짜·가짜 모두 <b>0.5 부근</b> (1도 0도 아님).</li>
+      <li>이때 <code>D_loss</code>는 0이 아니라 <b>중간값에서 정체</b>하고, <code>G_gan_loss</code>도 0으로 안 갑니다.</li>
+      <li>즉 <b>"loss가 0에 수렴 = 좋은 것"이 아닙니다.</b> 한쪽 loss가 0으로 가면 보통 학습이 무너진 신호(mode collapse 등)입니다.</li>
+    </ul>
+    <div class="key">올바른 그림: D_loss와 G_loss가 <b>어느 중간 범위에서 서로 밀고 당기며 안정적으로 진동</b>하고, 그 사이 PatchNCE loss가 꾸준히 낮아지며, <b>생성 이미지 품질이 점점 좋아지는 것</b> — 이게 건강한 학습입니다.</div>
+  </div>
+  <div class="card">
+    <h3 style="margin-top:0;">loss 값을 읽는 법 (직관)</h3>
+    <table>
+      <tr><th>관찰</th><th>해석</th></tr>
+      <tr><td>D_loss가 0에 가깝게 떨어짐</td><td>D가 G를 압도(가짜 다 간파). G가 못 배움 → 불균형</td></tr>
+      <tr><td>G_gan_loss가 0에 가깝게 떨어짐</td><td>G가 D를 너무 쉽게 속임. D가 약함 → 품질 신뢰 어려움</td></tr>
+      <tr><td>둘이 중간값에서 진동 + NCE 하락</td><td>✅ 건강한 적대적 균형, 품질 향상 중</td></tr>
+      <tr><td>NCE가 안 떨어짐</td><td>입력 구조가 출력에 반영 안 됨 → 내용 붕괴 위험</td></tr>
+    </table>
+  </div>
+</section>
+
+<!-- 7 -->
+<section id="stop">
+  <h2><span class="num">7</span>그러면 학습은 언제 끝내나</h2>
+  <div class="card">
+    <p>loss 임계값이 아니라 아래 기준으로 멈춥니다.</p>
+    <ul>
+      <li><b>정해진 epoch 수</b>까지 학습 (이 코드는 기본 400 epoch, GUI에서 조정).</li>
+      <li><b>생성 이미지의 정성 평가</b>: epoch별 저장 이미지(Source/Translated/Target/Identity)를 눈으로 비교.</li>
+      <li><b>정량 지표</b>: paired GT가 없으면 <b>FID/KID</b>(분포 거리), downstream task 성능 등으로 측정.</li>
+      <li><b>안정성 모니터링</b>: D_loss/G_loss가 한쪽으로 붕괴하지 않는지, NCE가 꾸준히 낮아지는지.</li>
+    </ul>
+    <div class="note">정리하면 — Discriminator는 "합격 도장"을 찍는 장치가 아니라 <b>G를 계속 끌어올리는 적대적 코치</b>입니다. 완료 판단은 <b>사람/지표(FID 등)</b>가 하지, D의 점수 한 컷으로 정해지지 않습니다.</div>
+  </div>
+</section>
+
+<!-- summary -->
+<section>
+  <h2><span class="num">★</span>한 장 요약</h2>
+  <div class="card">
+    <ul>
+      <li><b>G</b>가 SAR→optical 변환, <b>D</b>(PatchGAN)가 패치별 진짜/가짜 채점, <b>F</b>가 PatchNCE용 임베딩.</li>
+      <li>한 스텝: 순전파 → D_loss·G_loss 계산 → <b>D, G, F 순서로 각자 갱신</b>.</li>
+      <li><b>GAN loss</b> = 스타일(optical다움), <b>PatchNCE</b> = 콘텐츠(입력 구조 보존). 둘 다 필요.</li>
+      <li>PatchNCE는 임계값 통과가 아니라 <b>계속 minimize되는 연속 값</b>.</li>
+      <li><b>"loss가 X 이하면 D가 통과"는 없음.</b> D와 G는 균형점에서 진동하며, 완료는 epoch/FID/육안으로 판단.</li>
+    </ul>
+  </div>
+</section>
+
+</div>
+
+<footer>
+  CUT 학습 원리 설명자료 · 근거: <code>modules/cut_model.py</code> (train_step), <code>modules/losses.py</code> (GANLoss, PatchNCELoss)
+</footer>
+
+<script>
+  // render PatchGAN score grids (illustrative)
+  function fill(id, realish){
+    const g = document.getElementById(id);
+    for(let i=0;i<36;i++){
+      const c = document.createElement('div');
+      c.className='cellp';
+      // realish: high values (green); fake: low values (red); add noise
+      let v = realish ? 0.65+Math.random()*0.3 : 0.05+Math.random()*0.35;
+      const r = Math.round(255*(1-v)), gr = Math.round(180*v+40);
+      c.style.background = `rgb(${r},${gr},70)`;
+      c.textContent = v.toFixed(1);
+      g.appendChild(c);
+    }
+  }
+  fill('grid-real', true);
+  fill('grid-fake', false);
+</script>
+</body>
+</html>

@@ -53,13 +53,20 @@
 
 ## 설치
 
+이 코드베이스는 **Keras 2 API** 기준입니다. TensorFlow 버전에 따라 두 가지 방법:
+
 ```bash
-pip install -r requirements_gui.txt
-# 또는
-pip install gradio "tensorflow-cpu==2.15.1"   # GPU 환경은 tensorflow==2.15.1
+# (A) Python <= 3.11 : Keras 2 가 포함된 TF 2.15 사용
+pip install gradio "tensorflow==2.15.1"     # CPU 전용은 tensorflow-cpu==2.15.1
+
+# (B) 최신 Colab (Python 3.12, TF 2.16+/Keras 3) : tf-keras 호환 레이어 사용
+pip install gradio tf-keras
 ```
 
-> 이 저장소 코드는 TensorFlow 2.15(Keras 2) 기준입니다. Keras 3(TF 2.16+)에서는 호환되지 않습니다.
+> `gui.py` 는 `TF_USE_LEGACY_KERAS=1` 을 자동 설정합니다. 따라서 (B) 환경에서는
+> **`tf-keras` 만 설치**하면 기존 Keras 2 코드가 그대로 동작합니다. 설치하지 않으면
+> `Layer.__init__() takes 1 positional argument but 2 were given` 같은 Keras 3
+> 오류가 납니다.
 
 ## 실행 (PC)
 
@@ -76,9 +83,11 @@ python gui.py --port 8080     # 포트 변경
 ```python
 !git clone https://github.com/nanseko/nanse_test_repo.git
 %cd nanse_test_repo
-!pip install -q gradio "tensorflow==2.15.1"
-!python gui.py          # Colab 감지 시 share 링크 자동 생성
+!pip install -q gradio tf-keras          # 최신 Colab(Keras 3) 대비 tf-keras 필수
+!python gui.py                           # Colab 감지 시 share 링크 자동 생성
 ```
+
+> 출력의 `https://XXXX.gradio.live` 공개 URL을 클릭하세요. `127.0.0.1` 은 Colab에서 접속되지 않습니다.
 
 Colab에서 데이터셋은 Google Drive를 마운트해 사용하는 것을 권장합니다.
 

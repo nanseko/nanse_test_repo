@@ -13,7 +13,7 @@ from tensorflow.keras.layers import Input, Dense, Lambda
 
 from modules.attention import CBAM, CoordinateAttention
 from modules.layers import ConvBlock, ConvTransposeBlock, ResBlock, AntialiasSampling, Padding2D
-from modules.losses import GANLoss, PatchNCELoss
+from modules.losses import GANLoss, PatchNCELoss, gradient_loss, color_moment_loss
 
 
 def maybe_attention(x, attention_type, attention_reduction, name=None):
@@ -24,6 +24,27 @@ def maybe_attention(x, attention_type, attention_reduction, name=None):
     if attention_type == 'none':
         return x
     raise ValueError(f'Unsupported attention type: {attention_type}')
+
+
+def default_nce_layer_names(resnet_blocks, attention_encoder):
+    """ Build the default PatchNCE feature taps as stable layer *names*.
+
+    Using names (instead of absolute layer indices) keeps the NCE taps pinned
+    to the same semantic positions even when optional attention layers are
+    inserted into the generator, which would otherwise shift every index.
+
+    When ``attention_encoder`` is on, the encoder taps point at the
+    attention-refined outputs so PatchNCE consumes the refined features.
+    """
+    enc1 = 'attention_encoder_1' if attention_encoder else 'enc_conv1'
+    enc2 = 'attention_encoder_2' if attention_encoder else 'enc_conv2'
+    # Mirror the original [input, conv128, conv256, resblock_0, resblock_4]
+    # taps, but clamp the resblock indices to the available block count.
+    res_taps = sorted({0, min(4, max(resnet_blocks - 1, 0))})
+    names = ['gen_input', enc1, enc2]
+    names += [f'resblock_{i}' for i in res_taps]
+
+    return names
 
 
 def Generator(input_shape,
@@ -46,36 +67,37 @@ def Generator(input_shape,
     assert attention_reduction > 0
     use_bias = (norm_layer == 'instance')
 
-    inputs = Input(shape=input_shape)
+    inputs = Input(shape=input_shape, name='gen_input')
     x = Padding2D(3, pad_type='reflect')(inputs)
     x = ConvBlock(64, 7, padding='valid', use_bias=use_bias, norm_layer=norm_layer, activation='relu')(x)
     if attention_encoder:
         x = maybe_attention(x, attention_type, attention_reduction, name='attention_encoder_0')
 
     if use_antialias:
-        x = ConvBlock(128, 3, padding='same', use_bias=use_bias, norm_layer=norm_layer, activation='relu')(x)
+        x = ConvBlock(128, 3, padding='same', use_bias=use_bias, norm_layer=norm_layer, activation='relu', name='enc_conv1')(x)
         if attention_encoder:
             x = maybe_attention(x, attention_type, attention_reduction, name='attention_encoder_1')
         x = AntialiasSampling(4, mode='down', impl=impl)(x)
-        x = ConvBlock(256, 3, padding='same', use_bias=use_bias, norm_layer=norm_layer, activation='relu')(x)
+        x = ConvBlock(256, 3, padding='same', use_bias=use_bias, norm_layer=norm_layer, activation='relu', name='enc_conv2')(x)
         if attention_encoder:
             x = maybe_attention(x, attention_type, attention_reduction, name='attention_encoder_2')
         x = AntialiasSampling(4, mode='down', impl=impl)(x)
     else:
-        x = ConvBlock(128, 3, strides=2, padding='same', use_bias=use_bias, norm_layer=norm_layer, activation='relu')(x)
+        x = ConvBlock(128, 3, strides=2, padding='same', use_bias=use_bias, norm_layer=norm_layer, activation='relu', name='enc_conv1')(x)
         if attention_encoder:
             x = maybe_attention(x, attention_type, attention_reduction, name='attention_encoder_1')
-        x = ConvBlock(256, 3, strides=2, padding='same', use_bias=use_bias, norm_layer=norm_layer, activation='relu')(x)
+        x = ConvBlock(256, 3, strides=2, padding='same', use_bias=use_bias, norm_layer=norm_layer, activation='relu', name='enc_conv2')(x)
         if attention_encoder:
             x = maybe_attention(x, attention_type, attention_reduction, name='attention_encoder_2')
 
-    for _ in range(resnet_blocks):
+    for block_idx in range(resnet_blocks):
         x = ResBlock(256,
                      3,
                      use_bias,
                      norm_layer,
                      attention_type=attention_type if attention_resblocks else 'none',
-                     attention_reduction=attention_reduction)(x)
+                     attention_reduction=attention_reduction,
+                     name=f'resblock_{block_idx}')(x)
 
     if use_antialias:
         x = AntialiasSampling(4, mode='up', impl=impl)(x)
@@ -133,10 +155,12 @@ def Discriminator(input_shape, norm_layer, use_antialias, impl):
 
 def Encoder(generator, nce_layers):
     """ Create an Encoder that shares weights with the generator.
-    """
-    assert max(nce_layers) <= len(generator.layers) and min(nce_layers) >= 0
 
-    outputs = [generator.get_layer(index=idx).output for idx in nce_layers]
+    ``nce_layers`` is a list of generator layer *names* (see
+    ``default_nce_layer_names``). Selecting feature taps by name keeps them
+    pinned to the intended positions regardless of optional attention layers.
+    """
+    outputs = [generator.get_layer(name).output for name in nce_layers]
 
     return Model(inputs=generator.input, outputs=outputs, name='encoder')
 
@@ -204,13 +228,15 @@ class CUT_model(Model):
                  netF_units=256,
                  netF_num_patches=256,
                  nce_temp=0.07,
-                 nce_layers=[0,3,5,7,11],
+                 nce_layers=None,
                  impl='ref',
                  attention_type='none',
                  attention_reduction=16,
                  attention_encoder=False,
                  attention_resblocks=False,
                  attention_decoder=False,
+                 lambda_grad=0.0,
+                 lambda_color=0.0,
                  **kwargs):
         assert cut_mode in ['cut', 'fastcut']
         assert gan_mode in ['lsgan', 'nonsaturating']
@@ -220,10 +246,16 @@ class CUT_model(Model):
         assert impl in ['ref', 'cuda']
         assert attention_type in ['none', 'cbam', 'coord']
         assert attention_reduction > 0
+        assert lambda_grad >= 0
+        assert lambda_color >= 0
         super(CUT_model, self).__init__(self, **kwargs)
 
+        self.lambda_grad = lambda_grad
+        self.lambda_color = lambda_color
         self.gan_mode = gan_mode
         self.nce_temp = nce_temp
+        if nce_layers is None:
+            nce_layers = default_nce_layer_names(resnet_blocks, attention_encoder)
         self.nce_layers = nce_layers
         self.netG = Generator(source_shape,
                               target_shape,
@@ -291,6 +323,12 @@ class CUT_model(Model):
                 NCE_loss = (NCE_loss + NCE_B_loss) * 0.5
 
             G_loss += NCE_loss
+
+            """Optional structure / color regularization (lambda=0 disables)."""
+            if self.lambda_grad > 0:
+                G_loss += self.lambda_grad * gradient_loss(real_A, fake_B)
+            if self.lambda_color > 0 and self.use_nce_identity:
+                G_loss += self.lambda_color * color_moment_loss(idt_B, real_B)
 
         D_loss_grads = tape.gradient(D_loss, self.netD.trainable_variables)
         self.D_optimizer.apply_gradients(zip(D_loss_grads, self.netD.trainable_variables))

@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CUT + Attention 설명자료 (SAR-to-Optical)</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1d2740;
+    --ink:#e8edf7; --muted:#9fb0cc; --line:#2c3a5a;
+    --accent:#4f8cff; --accent2:#22c55e; --warn:#f59e0b; --pink:#ec4899;
+    --cut:#64748b; --att:#f97316;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{
+    margin:0; background:linear-gradient(180deg,#0c111c,#0f1420 40%);
+    color:var(--ink); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR","Malgun Gothic",sans-serif;
+    line-height:1.7; font-size:16px;
+  }
+  header{
+    padding:56px 24px 40px; text-align:center;
+    background:radial-gradient(1200px 400px at 50% -50%, rgba(79,140,255,.25), transparent);
+    border-bottom:1px solid var(--line);
+  }
+  header h1{font-size:2.1rem; margin:0 0 10px; letter-spacing:-.5px;}
+  header p{color:var(--muted); margin:6px auto; max-width:760px;}
+  .badge{display:inline-block; background:var(--att); color:#1a1206; font-weight:700;
+    padding:3px 12px; border-radius:999px; font-size:.78rem; letter-spacing:.5px; margin-bottom:14px;}
+  .wrap{max-width:1080px; margin:0 auto; padding:0 24px 80px;}
+  nav{position:sticky; top:0; z-index:20; background:rgba(12,17,28,.92); backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line); padding:10px 24px; display:flex; gap:6px; flex-wrap:wrap; justify-content:center;}
+  nav a{color:var(--muted); text-decoration:none; font-size:.85rem; padding:5px 11px; border-radius:8px;}
+  nav a:hover{color:#fff; background:var(--panel2);}
+  section{margin-top:54px;}
+  h2{font-size:1.55rem; border-left:4px solid var(--accent); padding-left:14px; margin:0 0 6px;}
+  h2 .num{color:var(--accent); font-weight:800; margin-right:8px;}
+  h3{font-size:1.18rem; margin:30px 0 10px; color:#dbe6ff;}
+  .lead{color:var(--muted); margin:0 0 18px;}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px 24px; margin:16px 0;}
+  .grid2{display:grid; grid-template-columns:1fr 1fr; gap:16px;}
+  .grid3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px;}
+  @media(max-width:820px){.grid2,.grid3{grid-template-columns:1fr;}}
+  .pill{display:inline-block; padding:2px 9px; border-radius:6px; font-size:.76rem; font-weight:700;}
+  .pill.cut{background:rgba(100,116,139,.25); color:#cbd5e1; border:1px solid #475569;}
+  .pill.att{background:rgba(249,115,22,.18); color:#fdba74; border:1px solid #b45309;}
+  code,.mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
+  code{background:#0d1426; border:1px solid var(--line); padding:1px 6px; border-radius:5px; font-size:.86em; color:#a7c4ff;}
+  pre{background:#0a0f1c; border:1px solid var(--line); border-radius:10px; padding:14px 16px; overflow:auto; font-size:.85rem;}
+  pre code{background:none; border:none; padding:0; color:#cbd6f0;}
+  table{width:100%; border-collapse:collapse; margin:12px 0; font-size:.92rem;}
+  th,td{border:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top;}
+  th{background:var(--panel2); color:#dbe6ff;}
+  tr:nth-child(even) td{background:rgba(255,255,255,.02);}
+  .note{border-left:4px solid var(--warn); background:rgba(245,158,11,.08); padding:12px 16px; border-radius:0 10px 10px 0; margin:14px 0;}
+  .key{border-left:4px solid var(--accent2); background:rgba(34,197,94,.08); padding:12px 16px; border-radius:0 10px 10px 0; margin:14px 0;}
+
+  /* Flowchart */
+  .flow{display:flex; flex-direction:column; align-items:center; gap:0; margin:8px 0;}
+  .fnode{position:relative; width:90%; max-width:560px; padding:11px 16px; border-radius:10px;
+    text-align:center; font-size:.9rem; border:1.5px solid; background:var(--panel2);}
+  .fnode small{display:block; color:var(--muted); font-size:.74rem; margin-top:2px;}
+  .fnode.io{border-color:#64748b; background:#1b2336;}
+  .fnode.enc{border-color:#3b82f6; background:rgba(59,130,246,.12);}
+  .fnode.res{border-color:#8b5cf6; background:rgba(139,92,246,.12);}
+  .fnode.dec{border-color:#14b8a6; background:rgba(20,184,166,.12);}
+  .fnode.att{border-color:var(--att); background:rgba(249,115,22,.18); font-weight:700;}
+  .fnode.nce{border-color:var(--pink); background:rgba(236,72,153,.12);}
+  .arrow{width:2px; height:20px; background:linear-gradient(#4a5a7e,#4a5a7e); position:relative;}
+  .arrow:after{content:"▼"; position:absolute; bottom:-4px; left:-5px; color:#4a5a7e; font-size:.7rem;}
+  .tag{position:absolute; right:-8px; top:-9px; background:var(--att); color:#1a1206;
+    font-size:.66rem; font-weight:800; padding:1px 7px; border-radius:6px; transform:rotate(2deg);}
+
+  /* side-by-side compare flow */
+  .compare{display:grid; grid-template-columns:1fr 1fr; gap:22px;}
+  @media(max-width:820px){.compare{grid-template-columns:1fr;}}
+  .col-title{text-align:center; font-weight:800; padding:8px; border-radius:9px; margin-bottom:10px;}
+  .col-title.a{background:rgba(100,116,139,.2); border:1px solid #475569;}
+  .col-title.b{background:rgba(249,115,22,.18); border:1px solid #b45309;}
+  .mini .fnode{font-size:.8rem; padding:8px 10px;}
+
+  /* attention diagram */
+  .attbox{display:flex; flex-direction:column; gap:8px; align-items:center;}
+  .attrow{display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:center;}
+  .chip{padding:7px 12px; border-radius:8px; font-size:.82rem; border:1px solid var(--line); background:#0d1426;}
+  .chip.op{background:rgba(79,140,255,.14); border-color:#3b6fd4;}
+  .chip.out{background:rgba(249,115,22,.16); border-color:#b45309; font-weight:700;}
+  .ar{color:#4a5a7e; font-size:1.1rem;}
+  footer{border-top:1px solid var(--line); margin-top:60px; padding:26px 24px; text-align:center; color:var(--muted); font-size:.85rem;}
+  .why-card{display:flex; gap:14px; align-items:flex-start;}
+  .why-ico{flex:0 0 38px; height:38px; border-radius:10px; display:grid; place-items:center; font-size:1.2rem;
+    background:rgba(249,115,22,.18); border:1px solid #b45309;}
+  ul.tight li{margin:4px 0;}
+</style>
+</head>
+<body>
+<header>
+  <div class="badge">CUT + ATTENTION · SAR-to-Optical</div>
+  <h1>CUT 생성기에 Attention을 추가한 이유와 위치</h1>
+  <p>본 문서는 <b>Contrastive Unpaired Translation(CUT)</b> 모델의 Generator에 Attention 메커니즘을 추가한 배경,
+     구체적인 삽입 위치, 그리고 <b>왜 그 위치여야 하는지</b>를 기존 CUT 대비 순서도와 함께 상세히 설명합니다.</p>
+  <p style="font-size:.85rem;">기반 저장소: <code>cryu854/CUT</code> · 참고 문서: <code>README_2.md</code></p>
+</header>
+
+<nav>
+  <a href="#bg">0. 배경</a>
+  <a href="#why">1. 왜 추가하나</a>
+  <a href="#modules">2. Attention 모듈</a>
+  <a href="#where">3. 어디에 추가</a>
+  <a href="#whyhere">4. 왜 그 위치</a>
+  <a href="#flow">5. 순서도 비교</a>
+  <a href="#params">6. 파라미터</a>
+  <a href="#exp">7. 실험 가이드</a>
+</nav>
+
+<div class="wrap">
+
+<!-- 0 -->
+<section id="bg">
+  <h2><span class="num">0</span>배경: CUT 모델은 무엇인가</h2>
+  <p class="lead">Attention을 어디에 넣었는지 이해하려면, 먼저 CUT Generator의 데이터 흐름을 알아야 합니다.</p>
+  <div class="card">
+    <p>CUT은 <b>짝이 없는(unpaired) 영상 변환</b>을 위한 모델로, CycleGAN과 달리 한 방향(one-sided) 변환만으로
+       대조 학습(contrastive learning) 기반의 <b>PatchNCE Loss</b>를 사용해 입력·출력 패치의 대응 관계를 학습합니다.</p>
+    <p>Generator는 전형적인 <b>ResNet 기반 인코더–변환–디코더</b> 구조입니다.</p>
+    <div class="grid3">
+      <div class="card" style="margin:0; border-color:#3b82f6;">
+        <span class="pill att" style="background:rgba(59,130,246,.18);border-color:#3b6fd4;color:#bcd3ff;">Encoder</span>
+        <p style="margin:8px 0 0; font-size:.9rem;">7×7 ConvBlock → 2회 Downsampling. 입력 영상을 압축된 특징 공간(256ch, 64×64)으로 인코딩.</p>
+      </div>
+      <div class="card" style="margin:0; border-color:#8b5cf6;">
+        <span class="pill att" style="background:rgba(139,92,246,.18);border-color:#7c3aed;color:#d6c8ff;">ResBlocks ×9</span>
+        <p style="margin:8px 0 0; font-size:.9rem;">9개의 Residual Block에서 도메인 변환(SAR → Optical)의 핵심 표현 변환이 일어남.</p>
+      </div>
+      <div class="card" style="margin:0; border-color:#14b8a6;">
+        <span class="pill att" style="background:rgba(20,184,166,.18);border-color:#0d9488;color:#9af0e4;">Decoder</span>
+        <p style="margin:8px 0 0; font-size:.9rem;">2회 Upsampling → 7×7 Conv(tanh). 특징을 다시 영상으로 복원.</p>
+      </div>
+    </div>
+    <div class="key">
+      <b>핵심 연결고리 — PatchNCE는 Generator 내부 특징을 그대로 읽는다.</b><br>
+      <code>Encoder(generator, nce_layers=[0,3,5,7,11])</code> 는 Generator의 중간 레이어 출력을 그대로 가져와
+      대조 학습에 사용합니다. 즉 <b>Generator 중간 특징의 품질 = PatchNCE 학습 신호의 품질</b>이며,
+      이것이 Attention을 "어디에" 넣을지 결정하는 가장 중요한 단서입니다. (4장에서 상술)
+    </div>
+  </div>
+</section>
+
+<!-- 1 -->
+<section id="why">
+  <h2><span class="num">1</span>왜 Attention을 추가하는가</h2>
+  <p class="lead">대상 작업은 <b>SAR → Optical(광학) 영상 변환</b>입니다. 이 작업의 고유한 어려움이 Attention 도입의 근거입니다.</p>
+
+  <div class="card">
+    <div class="grid2">
+      <div class="why-card"><div class="why-ico">🛰️</div><div>
+        <b>SAR의 speckle 잡음</b><br>
+        <span style="color:var(--muted)">SAR 영상은 곱셈성 speckle 잡음이 강합니다. 일반 Conv는 잡음과 신호를 구분하지 못해
+        speckle이 그대로 광학 텍스처로 "번역(hallucination)"되기 쉽습니다. Attention은 의미 있는 영역에 가중치를 주어 잡음 억제를 돕습니다.</span>
+      </div></div>
+      <div class="why-card"><div class="why-ico">🧭</div><div>
+        <b>강한 구조·방향성 정보</b><br>
+        <span style="color:var(--muted)">도로, 건물 경계, 해안선, 농경지 패턴 등 위치·방향 구조가 중요합니다.
+        특히 좌표(가로/세로) 방향성을 잘 보존해야 하므로 <b>Coordinate Attention</b>이 적합합니다.</span>
+      </div></div>
+      <div class="why-card"><div class="why-ico">🎯</div><div>
+        <b>채널·공간 선택성 부족</b><br>
+        <span style="color:var(--muted)">기본 CUT의 Conv는 모든 채널·위치를 동등하게 취급합니다.
+        어떤 채널/영역이 도메인 변환에 중요한지 명시적으로 강조하면 변환 품질이 올라갑니다 → <b>CBAM</b>.</span>
+      </div></div>
+      <div class="why-card"><div class="why-ico">🔗</div><div>
+        <b>PatchNCE 신호 강화</b><br>
+        <span style="color:var(--muted)">Attention으로 정제된 특징을 PatchNCE가 읽으면, 대조 학습의 양/음 패치 구분이 또렷해져
+        구조 보존(structure preservation)이 강화됩니다. <b>손실 함수 수정 없이</b> 성능 향상이 가능합니다.</span>
+      </div></div>
+    </div>
+    <div class="key" style="margin-top:18px;">
+      <b>한 줄 요약:</b> Attention은 ① speckle 잡음 억제, ② 구조/방향성 보존, ③ 중요 채널·영역 강조, ④ PatchNCE 신호 정제를 통해
+      <b>기존 CUT 구조와 손실 함수를 건드리지 않고</b> SAR-to-Optical 변환 품질을 끌어올리기 위해 추가되었습니다.
+    </div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="modules">
+  <h2><span class="num">2</span>추가된 Attention 모듈 (<code>modules/attention.py</code>)</h2>
+  <p class="lead">두 가지 Attention 타입을 제공하며, 모두 입력과 <b>동일한 shape(NHWC)</b>을 반환해 기존 흐름에 그대로 끼워 넣을 수 있습니다.</p>
+
+  <div class="grid2">
+    <div class="card" style="border-color:var(--att);">
+      <h3 style="margin-top:0;">① CBAM <span class="pill att">channel + spatial</span></h3>
+      <p style="color:var(--muted); font-size:.9rem;">"어떤 채널이 중요한가" 다음 "어떤 위치가 중요한가"를 순차적으로 강조.</p>
+      <div class="attbox">
+        <div class="attrow"><span class="chip">입력 NHWC</span></div>
+        <div class="ar">↓</div>
+        <div class="attrow">
+          <span class="chip op">GAP</span><span class="chip op">GMP</span>
+          <span class="ar">→</span><span class="chip">공유 MLP</span><span class="ar">→</span><span class="chip">sigmoid</span>
+        </div>
+        <div style="font-size:.78rem;color:var(--muted)">Channel Attention 가중치 (1×1×C)</div>
+        <div class="ar">↓ × 입력</div>
+        <div class="attrow">
+          <span class="chip op">채널평균</span><span class="chip op">채널최댓값</span>
+          <span class="ar">→</span><span class="chip">7×7 Conv</span><span class="ar">→</span><span class="chip">sigmoid</span>
+        </div>
+        <div style="font-size:.78rem;color:var(--muted)">Spatial Attention 가중치 (H×W×1)</div>
+        <div class="ar">↓ × 결과</div>
+        <div class="attrow"><span class="chip out">출력 NHWC (동일 shape)</span></div>
+      </div>
+    </div>
+
+    <div class="card" style="border-color:var(--att);">
+      <h3 style="margin-top:0;">② Coordinate Attention <span class="pill att">방향성 강조</span></h3>
+      <p style="color:var(--muted); font-size:.9rem;">가로·세로 방향을 따로 풀링해 <b>위치·방향 정보를 보존</b>. SAR-to-Optical 1순위 추천.</p>
+      <div class="attbox">
+        <div class="attrow"><span class="chip">입력 NHWC</span></div>
+        <div class="ar">↓</div>
+        <div class="attrow">
+          <span class="chip op">Height 방향 pooling</span>
+          <span class="chip op">Width 방향 pooling</span>
+        </div>
+        <div class="ar">↓ concat</div>
+        <div class="attrow"><span class="chip">1×1 bottleneck Conv (relu)</span></div>
+        <div class="ar">↓ split</div>
+        <div class="attrow">
+          <span class="chip op">conv_h → sigmoid</span>
+          <span class="chip op">conv_w → sigmoid</span>
+        </div>
+        <div class="ar">↓ 입력 × attn_h × attn_w</div>
+        <div class="attrow"><span class="chip out">출력 NHWC (동일 shape)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <table>
+    <tr><th>모듈</th><th>강조 대상</th><th>핵심 연산</th><th>SAR-to-Optical 적합성</th></tr>
+    <tr><td><b>CBAM</b></td><td>채널 + 공간</td><td>GAP/GMP+MLP, 7×7 Conv</td><td>중요 채널·영역을 명시적으로 강조. 색·질감 조정에 유리</td></tr>
+    <tr><td><b>Coordinate</b></td><td>가로·세로 좌표 방향</td><td>방향별 pooling + 1×1 bottleneck</td><td>도로·해안선 등 방향성 구조 보존에 유리 <b>(권장)</b></td></tr>
+    <tr><td><code>none</code></td><td>—</td><td>—</td><td>기존 CUT와 완전히 동일 (기본값)</td></tr>
+  </table>
+  <div class="note">기본값은 <code>attention_type='none'</code> 입니다. 플래그를 주지 않으면 Generator·Discriminator·PatchNCE 흐름이 기존 CUT와 <b>완전히 동일</b>하게 동작합니다.</div>
+</section>
+
+<!-- 3 -->
+<section id="where">
+  <h2><span class="num">3</span>어디에 추가했는가 — 3개의 삽입 지점</h2>
+  <p class="lead">Attention은 Generator(<code>modules/cut_model.py</code>)의 세 구간에 <b>선택적으로</b> 삽입할 수 있습니다. 각 구간은 독립 플래그로 켜고 끕니다.</p>
+
+  <div class="card">
+    <table>
+      <tr><th>플래그</th><th>삽입 위치</th><th>구현 위치</th></tr>
+      <tr>
+        <td><span class="pill att">attention_encoder</span></td>
+        <td>① 초기 7×7 ConvBlock 뒤<br>② 첫 downsampling block 뒤<br>③ 두 번째 downsampling block 뒤</td>
+        <td><code>cut_model.py</code> · <code>maybe_attention(...)</code> (name=<code>attention_encoder_0/1/2</code>)</td>
+      </tr>
+      <tr>
+        <td><span class="pill att">attention_resblocks</span></td>
+        <td>각 ResBlock의 <b>residual branch</b> (conv 2개 통과 후, skip 더하기 전)</td>
+        <td><code>layers.py · ResBlock</code> · <code>attention_position='residual'</code></td>
+      </tr>
+      <tr>
+        <td><span class="pill att">attention_decoder</span></td>
+        <td>decoder의 각 upsampling block 뒤</td>
+        <td><code>cut_model.py</code> · (name=<code>attention_decoder_0/1</code>)</td>
+      </tr>
+    </table>
+  </div>
+
+  <h3>3-1. 실제 삽입 코드 (Encoder 예시)</h3>
+  <pre><code>x = ConvBlock(64, 7, ...)(x)
+if attention_encoder:
+    x = maybe_attention(x, attention_type, attention_reduction, name='attention_encoder_0')  # ① 7x7 뒤
+...
+x = ConvBlock(128, 3, ...)(x)
+if attention_encoder:
+    x = maybe_attention(x, ..., name='attention_encoder_1')   # ② 1st down 뒤
+x = AntialiasSampling(4, mode='down', impl=impl)(x)
+x = ConvBlock(256, 3, ...)(x)
+if attention_encoder:
+    x = maybe_attention(x, ..., name='attention_encoder_2')   # ③ 2nd down 뒤</code></pre>
+
+  <h3>3-2. ResBlock 내부 삽입 (residual branch)</h3>
+  <pre><code>def call(self, inputs):
+    x = self.conv_block1(self.reflect_pad1(inputs))
+    x = self.conv_block2(self.reflect_pad2(x))
+
+    if self.attention_position == 'residual':   # 기본값
+        x = self.attention(x)        # ← residual 가지에만 Attention 적용
+        return inputs + x            #   그 후 skip connection
+    # 'post_add' 옵션: skip 더한 전체 출력에 적용
+    x = inputs + x
+    return self.attention(x)</code></pre>
+  <div class="note">
+    Generator는 ResBlock을 기본값 <code>attention_position='residual'</code> 로 사용합니다.
+    이는 원본 항등 경로(skip)를 보존하면서 <b>변환 신호(residual)에만</b> Attention을 적용하기 위함입니다(자세한 이유는 4장).
+  </div>
+</section>
+
+<!-- 4 -->
+<section id="whyhere">
+  <h2><span class="num">4</span>왜 그 위치인가 — 가장 중요한 핵심</h2>
+  <p class="lead">단순히 "Attention을 넣었다"가 아니라, <b>각 위치가 갖는 의미</b>가 SAR-to-Optical 변환과 PatchNCE 학습에 직결됩니다.</p>
+
+  <div class="card" style="border-color:var(--pink);">
+    <h3 style="margin-top:0;">🔑 핵심 논리: PatchNCE가 읽는 바로 그 특징을 정제한다</h3>
+    <p>CUT의 <code>nce_layers=[0,3,5,7,11]</code> 는 Generator의 <b>인코더~초반 ResBlock 출력</b>을 대조 학습 패치로 사용합니다.
+       따라서 Attention을 <b>인코더와 ResBlock</b>에 넣으면:</p>
+    <ul class="tight">
+      <li>PatchNCE가 <b>Attention으로 정제된 특징</b>을 자동으로 사용하게 됨 → 양/음 패치 대비가 또렷해짐</li>
+      <li><b>손실 함수(<code>losses.py</code>)는 한 줄도 수정할 필요가 없음</b> — 특징 품질만 올려 학습 신호를 강화</li>
+      <li>구조 보존(도로·경계·해안선)이 대조 학습 단계에서부터 강화됨</li>
+    </ul>
+  </div>
+
+  <div class="grid3">
+    <div class="card" style="border-color:#3b82f6;">
+      <h3 style="margin-top:0;color:#9bc0ff;">① Encoder 위치</h3>
+      <p style="font-size:.9rem;"><b>왜 여기?</b> 입력 SAR의 speckle 잡음이 가장 먼저 들어오는 곳. 여기서 중요한 구조/채널을 강조하고 잡음을 억제하면,
+      이후 모든 단계와 <b>PatchNCE 패치(layer 0,3)</b>가 깨끗한 특징을 받습니다.</p>
+      <p style="font-size:.85rem;color:var(--muted)">→ 잡음 억제 + 초기 구조 강조의 최적 지점.</p>
+    </div>
+    <div class="card" style="border-color:#8b5cf6;">
+      <h3 style="margin-top:0;color:#c7b3ff;">② ResBlock(residual) 위치</h3>
+      <p style="font-size:.9rem;"><b>왜 여기?</b> 도메인 변환(SAR→Optical)의 핵심 표현 변환이 일어나는 곳. residual 가지에만 적용해
+      <b>원본 항등 경로는 보존</b>하면서 변환 성분만 선택적으로 강조 → 학습 안정성 유지.</p>
+      <p style="font-size:.85rem;color:var(--muted)">→ <code>nce_layers 5,7,11</code> 이 이 영역을 읽어 NCE 신호가 직접 강화됨.</p>
+    </div>
+    <div class="card" style="border-color:#14b8a6;">
+      <h3 style="margin-top:0;color:#8ff0e2;">③ Decoder 위치 (선택)</h3>
+      <p style="font-size:.9rem;"><b>왜 선택적?</b> 출력 영상의 외형(색·질감)에 <b>직접</b> 영향을 줌. 효과가 크지만 잘못 쓰면 artifact 위험.</p>
+      <p style="font-size:.85rem;color:var(--muted)">→ encoder+resblocks로 먼저 검증 후 추가 권장.</p>
+    </div>
+  </div>
+
+  <div class="key">
+    <b>요약 — 위치 선택의 원칙</b><br>
+    Attention은 ① 잡음이 유입되는 <b>인코더</b>, ② 변환이 일어나며 동시에 <b>PatchNCE가 읽는 ResBlock</b>에 우선 배치합니다.
+    이는 "특징 품질 향상 → 대조 학습 신호 강화 → 구조 보존 개선"이라는 인과 사슬을 노린 것이며,
+    디코더는 출력에 직접 작용하므로 <b>검증 후 선택적</b>으로만 추가합니다.
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="flow">
+  <h2><span class="num">5</span>순서도: 기존 CUT vs Attention 적용 CUT</h2>
+  <p class="lead">동일한 Generator 골격에서 <span class="pill att">주황 노드</span>만 추가됩니다. 나머지 흐름과 손실 함수는 변하지 않습니다.</p>
+
+  <div class="card">
+    <div class="compare">
+      <!-- LEFT: original -->
+      <div class="mini">
+        <div class="col-title a">기존 CUT Generator</div>
+        <div class="flow">
+          <div class="fnode io">입력 SAR (256×256×3)</div><div class="arrow"></div>
+          <div class="fnode enc">7×7 ConvBlock (64ch)</div><div class="arrow"></div>
+          <div class="fnode enc">Downsample → 128ch</div><div class="arrow"></div>
+          <div class="fnode enc">Downsample → 256ch</div><div class="arrow"></div>
+          <div class="fnode res">ResBlock × 9 (256ch)</div><div class="arrow"></div>
+          <div class="fnode dec">Upsample → 128ch</div><div class="arrow"></div>
+          <div class="fnode dec">Upsample → 64ch</div><div class="arrow"></div>
+          <div class="fnode io">7×7 Conv (tanh) → Optical</div>
+        </div>
+      </div>
+
+      <!-- RIGHT: attention -->
+      <div class="mini">
+        <div class="col-title b">Attention 적용 CUT Generator</div>
+        <div class="flow">
+          <div class="fnode io">입력 SAR (256×256×3)</div><div class="arrow"></div>
+          <div class="fnode enc">7×7 ConvBlock (64ch)</div><div class="arrow"></div>
+          <div class="fnode att">＋ Attention <span class="tag">encoder_0</span></div><div class="arrow"></div>
+          <div class="fnode enc">Downsample → 128ch</div><div class="arrow"></div>
+          <div class="fnode att">＋ Attention <span class="tag">encoder_1</span></div><div class="arrow"></div>
+          <div class="fnode enc">Downsample → 256ch</div><div class="arrow"></div>
+          <div class="fnode att">＋ Attention <span class="tag">encoder_2</span></div><div class="arrow"></div>
+          <div class="fnode res">ResBlock × 9 <br><small>residual 가지에 Attention</small><span class="tag">resblocks</span></div><div class="arrow"></div>
+          <div class="fnode dec">Upsample → 128ch</div><div class="arrow"></div>
+          <div class="fnode att" style="opacity:.7">＋ Attention (선택) <span class="tag">decoder_0</span></div><div class="arrow"></div>
+          <div class="fnode dec">Upsample → 64ch</div><div class="arrow"></div>
+          <div class="fnode att" style="opacity:.7">＋ Attention (선택) <span class="tag">decoder_1</span></div><div class="arrow"></div>
+          <div class="fnode io">7×7 Conv (tanh) → Optical</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <h3>5-1. PatchNCE와의 연결 흐름</h3>
+  <div class="card">
+    <div class="flow">
+      <div class="fnode enc" style="max-width:640px;">Generator 중간 특징 (Attention으로 정제됨)</div>
+      <div class="arrow"></div>
+      <div class="fnode nce" style="max-width:640px;">Encoder(generator, nce_layers=[0,3,5,7,11]) — 같은 가중치 공유, 중간 특징 추출</div>
+      <div class="arrow"></div>
+      <div class="fnode nce" style="max-width:640px;">PatchSampleMLP → 패치 임베딩</div>
+      <div class="arrow"></div>
+      <div class="fnode nce" style="max-width:640px;">PatchNCE Loss <small>※ losses.py 수정 없음 — 정제된 특징을 그대로 사용</small></div>
+    </div>
+    <div class="key">이 그림이 핵심입니다. Attention은 Generator 내부 특징을 바꾸고, PatchNCE는 그 특징을 <b>자동으로</b> 읽습니다.
+      따라서 Attention 추가만으로 대조 학습 신호까지 함께 강화됩니다.</div>
+  </div>
+
+  <h3>5-2. 무엇이 바뀌고, 무엇이 그대로인가</h3>
+  <table>
+    <tr><th>구성요소</th><th>변경 여부</th><th>비고</th></tr>
+    <tr><td>Generator 골격(Conv/ResBlock/Upsample)</td><td><span class="pill cut">유지</span></td><td>Attention은 사이에 삽입만, 기존 레이어는 그대로</td></tr>
+    <tr><td>Attention 모듈</td><td><span class="pill att">신규 추가</span></td><td><code>modules/attention.py</code> (CBAM, Coordinate)</td></tr>
+    <tr><td>ResBlock</td><td><span class="pill att">확장</span></td><td><code>attention_type</code>, <code>attention_position</code> 인자 추가</td></tr>
+    <tr><td>Discriminator (PatchGAN)</td><td><span class="pill cut">유지</span></td><td>변경 없음</td></tr>
+    <tr><td>PatchNCE / GAN Loss</td><td><span class="pill cut">유지</span></td><td><code>losses.py</code> 수정 불필요</td></tr>
+    <tr><td>train_step 학습 로직</td><td><span class="pill cut">유지</span></td><td>D/G/F 최적화 흐름 동일</td></tr>
+    <tr><td>CLI</td><td><span class="pill att">5개 인자 추가</span></td><td>아래 6장 참조</td></tr>
+  </table>
+</section>
+
+<!-- 6 -->
+<section id="params">
+  <h2><span class="num">6</span>Attention 관련 파라미터</h2>
+  <table>
+    <tr><th>파라미터</th><th>타입</th><th>기본값</th><th>설명</th></tr>
+    <tr><td><code>--attention_type</code></td><td>choice</td><td><code>none</code></td><td><code>none</code> / <code>cbam</code> / <code>coord</code></td></tr>
+    <tr><td><code>--attention_reduction</code></td><td>int</td><td><code>16</code></td><td>bottleneck 채널 축소 비율</td></tr>
+    <tr><td><code>--attention_encoder</code></td><td>flag</td><td>off</td><td>encoder ConvBlock 뒤 적용</td></tr>
+    <tr><td><code>--attention_resblocks</code></td><td>flag</td><td>off</td><td>ResBlock residual 가지에 적용</td></tr>
+    <tr><td><code>--attention_decoder</code></td><td>flag</td><td>off</td><td>decoder upsampling 뒤 적용</td></tr>
+  </table>
+
+  <div class="card">
+    <h3 style="margin-top:0;">reduction 비율의 의미</h3>
+    <pre><code>bottleneck_channels = input_channels // attention_reduction</code></pre>
+    <table>
+      <tr><th>값</th><th>경향</th></tr>
+      <tr><td><code>8</code></td><td>더 강한 Attention, 파라미터↑, 과적합 가능성↑</td></tr>
+      <tr><td><code>16</code></td><td>기본 권장값</td></tr>
+      <tr><td><code>32</code></td><td>더 가벼운 Attention, 효과는 약해질 수 있음</td></tr>
+    </table>
+    <p style="color:var(--muted); font-size:.9rem;">SAR-to-Optical 첫 실험은 <code>16</code>으로 시작 → 불안정/과적합이면 <code>32</code>, 효과가 약하면 <code>8</code>.</p>
+  </div>
+</section>
+
+<!-- 7 -->
+<section id="exp">
+  <h2><span class="num">7</span>실험 가이드 (권장 순서)</h2>
+  <p class="lead">한 번에 모든 옵션을 켜기보다, 위치·종류를 나누어 비교하는 것이 좋습니다.</p>
+
+  <div class="card">
+    <h3 style="margin-top:0;">① Baseline (기존 CUT)</h3>
+    <pre><code>python train.py --mode cut \
+  --train_src_dir ./datasets/SAR/trainA --train_tar_dir ./datasets/Optical/trainB \
+  --test_src_dir ./datasets/SAR/testA  --test_tar_dir ./datasets/Optical/testB</code></pre>
+
+    <h3>② Coordinate Attention — encoder + resblocks <span class="pill att">권장 1순위</span></h3>
+    <pre><code>python train.py --mode cut \
+  --train_src_dir ./datasets/SAR/trainA --train_tar_dir ./datasets/Optical/trainB \
+  --test_src_dir ./datasets/SAR/testA  --test_tar_dir ./datasets/Optical/testB \
+  --attention_type coord --attention_encoder --attention_resblocks --attention_reduction 16</code></pre>
+
+    <h3>③ CBAM — encoder + resblocks</h3>
+    <pre><code>python train.py --mode cut \
+  --train_src_dir ./datasets/SAR/trainA --train_tar_dir ./datasets/Optical/trainB \
+  --test_src_dir ./datasets/SAR/testA  --test_tar_dir ./datasets/Optical/testB \
+  --attention_type cbam --attention_encoder --attention_resblocks --attention_reduction 16</code></pre>
+
+    <h3>④ Best 타입 + decoder Attention 추가</h3>
+    <pre><code>python train.py --mode cut \
+  --train_src_dir ./datasets/SAR/trainA --train_tar_dir ./datasets/Optical/trainB \
+  --test_src_dir ./datasets/SAR/testA  --test_tar_dir ./datasets/Optical/testB \
+  --attention_type coord --attention_encoder --attention_resblocks --attention_decoder --attention_reduction 16</code></pre>
+    <div class="note">실험별로 <code>--out_dir</code> 을 다르게 지정하면 결과 이미지·체크포인트를 구분하기 쉽습니다.</div>
+  </div>
+
+  <h3>7-1. 평가 시 함께 볼 항목 (SAR-to-Optical)</h3>
+  <div class="card">
+    <ul class="tight">
+      <li><b>구조 보존:</b> 도로·건물 경계·해안선·농경지 패턴이 유지되는가</li>
+      <li><b>색 변환 품질:</b> optical 도메인의 색감이 자연스러운가</li>
+      <li><b>texture hallucination:</b> SAR speckle이 과도하게 광학 텍스처로 번역되지 않는가</li>
+      <li><b>mode collapse:</b> 다양한 입력이 비슷한 결과로 수렴하지 않는가</li>
+      <li><b>NCE 안정성:</b> Attention 추가 후 학습 초반 loss가 급격히 불안정해지지 않는가</li>
+    </ul>
+    <p style="color:var(--muted); font-size:.9rem;">정량 평가는 paired GT가 없으므로 FID/KID, downstream segmentation 성능 등을 별도 구성합니다.</p>
+  </div>
+</section>
+
+<footer>
+  CUT + Attention 설명자료 · SAR-to-Optical · 기반: <code>cryu854/CUT</code> · 상세 사용법은 저장소의 <code>README_2.md</code> 참고<br>
+  구현 위치: <code>modules/attention.py</code> · <code>modules/cut_model.py</code> · <code>modules/layers.py</code>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,9 +1,55 @@
 """ Implement the following loss functions that used in CUT/FastCUT model.
 GANLoss
 PatchNCELoss
+gradient_loss (structure preservation)
+color_moment_loss (color consistency)
 """
 
 import tensorflow as tf
+
+
+def _luminance(x):
+    """ Map a [-1, 1] image to a [0, 1] single-channel luminance map. """
+    x = (x + 1.0) * 0.5
+    if x.shape[-1] == 3:
+        return tf.image.rgb_to_grayscale(x)
+    return tf.reduce_mean(x, axis=-1, keepdims=True)
+
+
+def gradient_loss(source, generated, blur=True):
+    """ Structure-preservation loss between input and output edges.
+
+    Encourages the generated image to keep the spatial gradients (edges:
+    roads, boundaries, coastlines) of the source. The source is optionally
+    blurred first so SAR speckle does not inject spurious edges.
+    Both inputs are expected in the [-1, 1] range.
+    """
+    gs = _luminance(source)
+    gg = _luminance(generated)
+    if blur:
+        gs = tf.nn.avg_pool2d(gs, ksize=3, strides=1, padding='SAME')
+
+    s_dx = gs[:, :, 1:, :] - gs[:, :, :-1, :]
+    s_dy = gs[:, 1:, :, :] - gs[:, :-1, :, :]
+    g_dx = gg[:, :, 1:, :] - gg[:, :, :-1, :]
+    g_dy = gg[:, 1:, :, :] - gg[:, :-1, :, :]
+
+    return tf.reduce_mean(tf.abs(s_dx - g_dx)) + tf.reduce_mean(tf.abs(s_dy - g_dy))
+
+
+def color_moment_loss(generated, reference):
+    """ Color-consistency loss matching per-channel mean/std (1st/2nd moments).
+
+    Intended for the identity path (idt_B = G(real_B) vs real_B): an identity
+    mapping should preserve the target-domain colour statistics. Inputs in
+    the [-1, 1] range; moments are computed per image over spatial dims.
+    """
+    g_mean, g_var = tf.nn.moments(generated, axes=[1, 2])
+    r_mean, r_var = tf.nn.moments(reference, axes=[1, 2])
+    g_std = tf.sqrt(g_var + 1e-5)
+    r_std = tf.sqrt(r_var + 1e-5)
+
+    return tf.reduce_mean(tf.abs(g_mean - r_mean)) + tf.reduce_mean(tf.abs(g_std - r_std))
 
 
 class GANLoss:

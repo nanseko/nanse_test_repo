@@ -36,6 +36,21 @@
 > 참고: M4-SAR는 512×512 optical(10m/60m)·SAR(VH/VV) 이미지로 구성된 대용량
 > 데이터셋입니다. 다운로드에 시간이 걸리며 Colab 디스크 용량을 확인하세요.
 
+### CUT 형식으로 자동 정리
+
+탭 0 하단의 "CUT 형식으로 정리"는 추출된 폴더를 CUT 학습 구조
+(`trainA`/`trainB`/`testA`/`testB`)로 만들어 줍니다.
+
+- 경로 키워드로 도메인을 분류합니다. 기본값: SAR(Source/A) = `sar,vh,vv`,
+  Optical(Target/B) = `optical,opt,rgb,vis,visible`. 실제 폴더명에 맞게 수정 가능.
+- 경로에 `test`/`val` 이 있으면 test, 없으면 train 으로 분류합니다. test 폴더가
+  전혀 없으면 "분리 비율"(기본 0.1)만큼 도메인별로 무작위로 test 를 떼어냅니다.
+- 대용량을 고려해 기본은 **symlink**(원본을 가리키는 링크, 용량 추가 거의 없음)
+  이며, 필요 시 **copy** 선택. symlink가 불가한 환경에서는 자동으로 copy 로 대체.
+- CUT은 unpaired 학습이라 A/B를 독립적으로 셔플하므로 파일 1:1 정렬은 필요 없으며,
+  파일명 충돌 방지를 위해 일련번호 접두어가 붙습니다.
+- 완료 시 **탭 1의 Source/Target 경로가 자동으로 채워집니다.**
+
 ## 설치
 
 ```bash

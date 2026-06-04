@@ -75,7 +75,7 @@ DEFAULT_CONFIG_PATH = './gui_config.json'
 CONFIG_KEYS = [
     # 1-2. Data folders
     'train_src_dir', 'train_tar_dir', 'test_src_dir', 'test_tar_dir',
-    'out_dir', 'image_size',
+    'out_dir', 'image_size', 'max_pairs',
     # 3. Basic training params
     'mode', 'epochs', 'batch_size', 'lr', 'beta_1', 'beta_2',
     'lr_decay_rate', 'lr_decay_step', 'save_n_epoch',
@@ -95,6 +95,7 @@ DEFAULTS = {
     'test_tar_dir': './datasets/Optical/testB',
     'out_dir': './output',
     'image_size': 256,
+    'max_pairs': 0,
     'mode': 'cut',
     'epochs': 400,
     'batch_size': 1,
@@ -149,6 +150,30 @@ def list_images(folder):
     for ext in IMAGE_EXTS:
         files.extend(glob.glob(os.path.join(folder, ext)))
     return sorted(files)
+
+
+def matched_pairs(src_dir, tar_dir, limit=0):
+    """ Pair SAR(source) and optical(target) images by filename stem.
+
+    The two domains share the same file names (e.g. 00001 in both folders), so
+    pairs are matched by the filename without extension. Returns parallel
+    (src_files, tar_files) lists for the common stems, optionally truncated to
+    the first ``limit`` pairs (0 = use all). Returns ([], []) if no stems match.
+    """
+    src = {}
+    for p in list_images(src_dir):
+        src.setdefault(os.path.splitext(os.path.basename(p))[0], p)
+    tar = {}
+    for p in list_images(tar_dir):
+        tar.setdefault(os.path.splitext(os.path.basename(p))[0], p)
+    common = sorted(set(src) & set(tar))
+    try:
+        limit = int(limit)
+    except (TypeError, ValueError):
+        limit = 0
+    if limit > 0:
+        common = common[:limit]
+    return [src[k] for k in common], [tar[k] for k in common]
 
 
 # --------------------------------------------------------------------------- #
@@ -260,8 +285,23 @@ def training_worker(cfg, state):
         from modules.cut_model import CUT_model
 
         state.log('데이터셋 준비 중...')
-        src_files = list_images(cfg['train_src_dir'])
-        tar_files = list_images(cfg['train_tar_dir'])
+        limit = int(cfg.get('max_pairs', 0) or 0)
+        src_files, tar_files = matched_pairs(
+            cfg['train_src_dir'], cfg['train_tar_dir'], limit)
+        if src_files:
+            state.log(f'파일명 매칭 쌍 {len(src_files)}개 사용'
+                      + (f' (수량 제한 {limit})' if limit > 0 else ' (전체)'))
+        else:
+            # Filenames do not match across folders -> fall back to independent
+            # lists, still honouring the quantity limit.
+            src_files = list_images(cfg['train_src_dir'])
+            tar_files = list_images(cfg['train_tar_dir'])
+            if limit > 0:
+                src_files = src_files[:limit]
+                tar_files = tar_files[:limit]
+            if src_files and tar_files:
+                state.log('경고: 파일명이 매칭되지 않아 독립 목록으로 사용합니다.')
+
         if not src_files or not tar_files:
             state.log('오류: 학습용 source 또는 target 폴더에 이미지가 없습니다.')
             with state.lock:
@@ -640,6 +680,11 @@ def do_scan(*folders):
         more = ' ...' if len(files) > 5 else ''
         status = f'{len(files)}개' if files else '없음/경로확인'
         msgs.append(f'• {label} [{folder}] : {status}  {sample}{more}')
+    # Filename-matched pair counts
+    tr_src, _ = matched_pairs(folders[0], folders[1], 0)
+    te_src, _ = matched_pairs(folders[2], folders[3], 0)
+    msgs.append(f'• 매칭된 학습 쌍(Train) : {len(tr_src)}개')
+    msgs.append(f'• 매칭된 검증 쌍(Test)  : {len(te_src)}개')
     return '\n'.join(msgs)
 
 
@@ -770,7 +815,10 @@ def build_ui():
             comp['test_src_dir'] = gr.Textbox(cfg['test_src_dir'], label='입력 Test Source 폴더')
             comp['test_tar_dir'] = gr.Textbox(cfg['test_tar_dir'], label='입력 Test Target 폴더')
             comp['out_dir'] = gr.Textbox(cfg['out_dir'], label='출력(Output) 폴더 — 체크포인트/로그/결과 저장')
-            comp['image_size'] = gr.Number(cfg['image_size'], label='이미지 크기 (정사각 resize)', precision=0)
+            with gr.Row():
+                comp['image_size'] = gr.Number(cfg['image_size'], label='이미지 크기 (정사각 resize)', precision=0)
+                comp['max_pairs'] = gr.Number(cfg['max_pairs'],
+                                              label='사용할 데이터 쌍 수 (0 = 전체)', precision=0)
             scan_btn = gr.Button('📂 폴더 스캔 (내부 이미지 파일 확인)')
             scan_out = gr.Textbox(label='스캔 결과', lines=5, interactive=False)
             scan_btn.click(do_scan,

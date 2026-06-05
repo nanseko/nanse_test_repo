@@ -927,38 +927,75 @@ def _build_step(op, intmode, method, window, enl_auto, enl_val, damping, sig_aut
     raise ValueError(op)
 
 
-def pp_add(steps, op, *vals):
-    steps = list(steps) + [_build_step(op, *vals)]
-    return steps, _pp_rows(steps)
+def _default_step(category):
+    """Create a step of the chosen top-level category with default params."""
+    if category == 'speckle':
+        return {'name': 'speckle_filter', 'enabled': True,
+                'params': {'method': 'lee', 'window_size': 7, 'enl': 'auto'},
+                'label': 'speckle: lee'}
+    if category == 'intensity':
+        return {'name': 'sar_intensity_transform', 'enabled': True,
+                'params': {'mode': 'log1p', 'eps': 1e-6}, 'label': 'intensity: log1p'}
+    if category == 'clipping':
+        return {'name': 'outlier_clipping', 'enabled': True,
+                'params': {'min_percentile': 0.2, 'max_percentile': 99.8, 'ignore_zero': True},
+                'label': 'clipping 0.2-99.8'}
+    if category == 'histogram':
+        return {'name': 'histogram_mapping', 'enabled': True,
+                'params': {'mode': 'sar_only', 'bins': 1024, 'optical_reference_dir': None,
+                           'clahe': {'enabled': False, 'clip_limit': 2.0, 'tile_grid_size': [8, 8]}},
+                'label': 'histogram: sar_only'}
+    if category == 'resize':
+        return {'name': 'resize_or_tile', 'enabled': True,
+                'params': {'mode': 'resize', 'image_size': 256}, 'label': 'resize 256'}
+    if category == 'channel':
+        return {'name': 'channel_adapter', 'enabled': True,
+                'params': {'output_channels': 3}, 'label': 'channel 3ch'}
+    if category == 'validate':
+        return {'name': 'validate_image', 'enabled': True,
+                'params': {'drop_empty': True, 'handle_nan': 'zero'}, 'label': 'validate'}
+    if category == 'normalize':
+        return {'name': 'normalize_for_cut', 'enabled': True,
+                'params': {'output_range': 'uint8'}, 'label': 'normalize uint8'}
+    raise ValueError(category)
 
 
-def pp_up(steps, idx):
+def pp_add_category(steps, category, sel):
+    """Append a new step of the given category; select it."""
+    steps = list(steps) + [_default_step(category)]
+    return steps, _pp_rows(steps), len(steps) - 1
+
+
+def pp_move_up(steps, sel):
     steps = list(steps)
-    i = int(idx) - 1
+    i = int(sel)
     if 0 < i < len(steps):
         steps[i - 1], steps[i] = steps[i], steps[i - 1]
-    return steps, _pp_rows(steps)
+        i -= 1
+    return steps, _pp_rows(steps), i
 
 
-def pp_down(steps, idx):
+def pp_move_down(steps, sel):
     steps = list(steps)
-    i = int(idx) - 1
+    i = int(sel)
     if 0 <= i < len(steps) - 1:
         steps[i + 1], steps[i] = steps[i], steps[i + 1]
-    return steps, _pp_rows(steps)
+        i += 1
+    return steps, _pp_rows(steps), i
 
 
-def pp_remove(steps, idx):
+def pp_remove_sel(steps, sel):
     steps = list(steps)
-    i = int(idx) - 1
+    i = int(sel)
     if 0 <= i < len(steps):
         del steps[i]
-    return steps, _pp_rows(steps)
+    i = max(0, min(i, len(steps) - 1)) if steps else 0
+    return steps, _pp_rows(steps), i
 
 
 def pp_reset_steps():
     steps = pp_default_steps()
-    return steps, _pp_rows(steps)
+    return steps, _pp_rows(steps), 0
 
 
 def pp_speckle_vis(method):
@@ -968,6 +1005,115 @@ def pp_speckle_vis(method):
     import gradio as gr
     return (gr.update(visible=win), gr.update(visible=win), gr.update(visible=win),
             gr.update(visible=damp), gr.update(visible=bm), gr.update(visible=bm))
+
+
+# Edit-panel widgets are returned in this fixed order by pp_on_select / wired
+# to pp_apply:  method, window, enl_auto, enl_val, damp, sig_auto, sig_val,
+#               intmode, cmin, cmax, ign, histmode, bins, optref, clahe, size, ch
+def pp_on_select(steps, evt: gr.SelectData):
+    """Row clicked -> open the edit panel pre-filled for that step."""
+    import gradio as gr
+    row = 0
+    try:
+        row = int(evt.index[0]) if evt and evt.index is not None else 0
+    except Exception:
+        row = 0
+    if not steps or row >= len(steps):
+        return [gr.update()] * 21
+    s = steps[row]
+    name = s['name']
+    p = s.get('params', {})
+
+    method = p.get('method', 'lee')
+    window = int(p.get('window_size', 7))
+    enl = p.get('enl', 'auto')
+    enl_auto = (enl == 'auto')
+    enl_val = 10.0 if enl_auto else float(enl)
+    damp = float(p.get('damping_factor', 2.0))
+    sig = p.get('bm3d_sigma', 'auto')
+    sig_auto = (sig == 'auto')
+    sig_val = 0.1 if sig_auto else float(sig)
+    intmode = p.get('mode', 'log1p') if name == 'sar_intensity_transform' else 'log1p'
+    cmin = float(p.get('min_percentile', 0.2))
+    cmax = float(p.get('max_percentile', 99.8))
+    ign = bool(p.get('ignore_zero', True))
+    histmode = p.get('mode', 'sar_only') if name == 'histogram_mapping' else 'sar_only'
+    bins = int(p.get('bins', 1024))
+    optref = p.get('optical_reference_dir') or ''
+    clahe = bool((p.get('clahe', {}) or {}).get('enabled', False))
+    size = int(p.get('image_size', 256))
+    ch = int(p.get('output_channels', 3))
+
+    is_spk = (name == 'speckle_filter')
+    spk_win = is_spk and method in ('lee', 'frost', 'refined_lee', 'gamma_map')
+    spk_damp = is_spk and method == 'frost'
+    spk_bm = is_spk and method == 'bm3d'
+    is_int = (name == 'sar_intensity_transform')
+    is_clip = (name == 'outlier_clipping')
+    is_hist = (name == 'histogram_mapping')
+    is_resize = (name == 'resize_or_tile')
+    is_chan = (name == 'channel_adapter')
+
+    title = f'편집 중: #{row + 1}  ·  {s.get("label", name)}'
+    if name in ('validate_image', 'normalize_for_cut'):
+        title += '  (이 스텝은 조절할 파라미터가 없습니다)'
+
+    return [
+        row,                                   # pp_sel
+        gr.update(visible=True),               # edit_panel
+        title,                                  # edit_title
+        gr.update(value=method, visible=is_spk),
+        gr.update(value=window, visible=spk_win),
+        gr.update(value=enl_auto, visible=spk_win),
+        gr.update(value=enl_val, visible=spk_win),
+        gr.update(value=damp, visible=spk_damp),
+        gr.update(value=sig_auto, visible=spk_bm),
+        gr.update(value=sig_val, visible=spk_bm),
+        gr.update(value=intmode, visible=is_int),
+        gr.update(value=cmin, visible=is_clip),
+        gr.update(value=cmax, visible=is_clip),
+        gr.update(value=ign, visible=is_clip),
+        gr.update(value=histmode, visible=is_hist),
+        gr.update(value=bins, visible=is_hist),
+        gr.update(value=optref, visible=is_hist),
+        gr.update(value=clahe, visible=is_hist),
+        gr.update(value=size, visible=is_resize),
+        gr.update(value=ch, visible=is_chan),
+    ]
+
+
+def pp_apply(steps, sel, method, window, enl_auto, enl_val, damp, sig_auto, sig_val,
+             intmode, cmin, cmax, ign, histmode, bins, optref, clahe, size, ch):
+    """Apply edit-panel params to the selected step."""
+    steps = list(steps)
+    i = int(sel)
+    if not (0 <= i < len(steps)):
+        return steps, _pp_rows(steps)
+    name = steps[i]['name']
+    if name == 'speckle_filter':
+        steps[i]['params'] = _speckle_params(method, window, enl_auto, enl_val,
+                                             damp, sig_auto, sig_val)
+        steps[i]['label'] = f'speckle: {method}'
+    elif name == 'sar_intensity_transform':
+        steps[i]['params'] = {'mode': intmode, 'eps': 1e-6}
+        steps[i]['label'] = f'intensity: {intmode}'
+    elif name == 'outlier_clipping':
+        steps[i]['params'] = {'min_percentile': float(cmin), 'max_percentile': float(cmax),
+                              'ignore_zero': bool(ign)}
+        steps[i]['label'] = f'clipping {cmin}-{cmax}'
+    elif name == 'histogram_mapping':
+        steps[i]['params'] = {'mode': histmode, 'bins': int(bins),
+                              'optical_reference_dir': (optref or None),
+                              'clahe': {'enabled': bool(clahe), 'clip_limit': 2.0,
+                                        'tile_grid_size': [8, 8]}}
+        steps[i]['label'] = f'histogram: {histmode}'
+    elif name == 'resize_or_tile':
+        steps[i]['params'] = {'mode': 'resize', 'image_size': int(size)}
+        steps[i]['label'] = f'resize {int(size)}'
+    elif name == 'channel_adapter':
+        steps[i]['params'] = {'output_channels': int(ch)}
+        steps[i]['label'] = f'channel {int(ch)}ch'
+    return steps, _pp_rows(steps)
 
 
 def _pp_config_from_steps(input_dir, output_dir, max_items, recursive, shuffle, steps):
@@ -1120,64 +1266,80 @@ def build_ui():
                     pp_recursive = gr.Checkbox(True, label='하위 폴더 포함')
                     pp_shuffle = gr.Checkbox(False, label='섞기(shuffle)')
 
-            with gr.Accordion('② 전처리 순서 만들기 (추가 → 위/아래 이동 → 삭제)', open=True):
+            with gr.Accordion('② 전처리 순서 만들기', open=True):
+                gr.Markdown(
+                    '1) **추가할 전처리** 종류를 고르고 `➕ 추가` → 맨 아래 #으로 생성됩니다.\n'
+                    '2) 표에서 **행(#)을 클릭**하면 선택되고, 아래 **편집 패널**이 열립니다 '
+                    '(speckle은 기본 Lee, 필터 변경 가능).\n'
+                    '3) 선택한 #을 `⬆/⬇` 로 위/아래 이동, `🗑` 로 삭제합니다.')
                 pp_steps = gr.State(pp_default_steps())
+                pp_sel = gr.State(0)
                 pp_table = gr.Dataframe(
                     headers=['#', '스텝', '파라미터'], datatype=['number', 'str', 'str'],
                     value=_pp_rows(pp_default_steps()), interactive=False, wrap=True,
-                    label='현재 파이프라인 (위→아래 순서로 실행)')
+                    label='현재 파이프라인 (위→아래 순서로 실행 · 행을 클릭해 선택/편집)')
                 with gr.Row():
-                    pp_addop = gr.Dropdown(
-                        ['validate', 'intensity', 'speckle (현재 필터/파라미터)', 'clipping',
-                         'histogram', 'resize', 'channel', 'normalize'],
-                        value='speckle (현재 필터/파라미터)', label='추가할 스텝')
+                    pp_addcat = gr.Dropdown(
+                        ['speckle', 'intensity', 'clipping', 'histogram', 'resize',
+                         'channel', 'validate', 'normalize'],
+                        value='speckle', label='추가할 전처리 (상위 메뉴)')
                     pp_add_btn = gr.Button('➕ 추가', variant='primary')
                 with gr.Row():
-                    pp_idx = gr.Number(1, label='선택 순서(#)', precision=0)
                     pp_up_btn = gr.Button('⬆ 위로')
                     pp_down_btn = gr.Button('⬇ 아래로')
-                    pp_rm_btn = gr.Button('🗑 삭제')
+                    pp_rm_btn = gr.Button('🗑 선택 삭제')
                     pp_reset_btn = gr.Button('↺ 기본 순서로')
 
-            with gr.Accordion('③ Speckle 필터 (필터마다 파라미터 다름)', open=True):
-                pp_spk = gr.Dropdown(PP.SPECKLE_METHODS, value='refined_lee',
-                                     label='speckle 필터 — 선택 시 아래 파라미터가 바뀝니다')
+            # ----- Edit panel (opens when a row is selected) ------------- #
+            with gr.Group(visible=False) as pp_edit_panel:
+                pp_edit_title = gr.Markdown('편집')
+                e_method = gr.Dropdown(PP.SPECKLE_METHODS, value='lee',
+                                       label='speckle 필터 종류', visible=False)
                 with gr.Row():
-                    pp_win = gr.Number(7, label='window_size', precision=0, visible=True)
-                    pp_enlauto = gr.Checkbox(True, label='ENL auto', visible=True)
-                    pp_enlval = gr.Number(10, label='ENL 값(auto 끄면)', visible=True)
+                    e_window = gr.Number(7, label='window_size', precision=0, visible=False)
+                    e_enlauto = gr.Checkbox(True, label='ENL auto', visible=False)
+                    e_enlval = gr.Number(10, label='ENL 값', visible=False)
                 with gr.Row():
-                    pp_damp = gr.Number(2.0, label='Frost damping_factor', visible=False)
-                    pp_sigauto = gr.Checkbox(True, label='BM3D sigma auto', visible=False)
-                    pp_sigval = gr.Number(0.1, label='BM3D sigma 값', visible=False)
-                pp_spk.change(pp_speckle_vis, inputs=pp_spk,
-                              outputs=[pp_win, pp_enlauto, pp_enlval, pp_damp, pp_sigauto, pp_sigval])
+                    e_damp = gr.Number(2.0, label='Frost damping_factor', visible=False)
+                    e_sigauto = gr.Checkbox(True, label='BM3D sigma auto', visible=False)
+                    e_sigval = gr.Number(0.1, label='BM3D sigma 값', visible=False)
+                e_intmode = gr.Dropdown(PP.INTENSITY_MODES, value='log1p',
+                                        label='intensity mode', visible=False)
+                with gr.Row():
+                    e_cmin = gr.Number(0.2, label='clip min %', visible=False)
+                    e_cmax = gr.Number(99.8, label='clip max %', visible=False)
+                    e_ign = gr.Checkbox(True, label='0값 제외', visible=False)
+                with gr.Row():
+                    e_histmode = gr.Dropdown(PP.HISTOGRAM_MODES, value='sar_only',
+                                             label='histogram 모드', visible=False)
+                    e_bins = gr.Number(1024, label='bins', precision=0, visible=False)
+                    e_clahe = gr.Checkbox(False, label='CLAHE', visible=False)
+                e_optref = gr.Textbox('', label='Optical 참조 폴더 (unpaired 모드)', visible=False)
+                e_size = gr.Number(256, label='resize image_size', precision=0, visible=False)
+                e_ch = gr.Number(3, label='출력 채널', precision=0, visible=False)
+                pp_apply_btn = gr.Button('✔ 적용', variant='primary')
 
-            with gr.Accordion('④ Intensity / Clipping / Histogram 파라미터', open=False):
-                pp_intmode = gr.Dropdown(PP.INTENSITY_MODES, value='log1p', label='intensity transform mode')
-                with gr.Row():
-                    pp_cmin = gr.Number(0.2, label='clip min percentile')
-                    pp_cmax = gr.Number(99.8, label='clip max percentile')
-                    pp_ignore0 = gr.Checkbox(True, label='0값 제외')
-                with gr.Row():
-                    pp_histmode = gr.Dropdown(PP.HISTOGRAM_MODES, value='sar_only', label='histogram 모드')
-                    pp_bins = gr.Number(1024, label='bins', precision=0)
-                    pp_clahe = gr.Checkbox(False, label='CLAHE(opencv 있으면)')
-                pp_optref = gr.Textbox('', label='Optical 참조 폴더 (histogram unpaired 모드)')
-                with gr.Row():
-                    pp_size = gr.Number(256, label='resize image_size', precision=0)
-                    pp_ch = gr.Number(3, label='channel 출력 채널', precision=0)
+            # edit widget order (matches pp_on_select outputs tail & pp_apply args)
+            edit_widgets = [e_method, e_window, e_enlauto, e_enlval, e_damp, e_sigauto,
+                            e_sigval, e_intmode, e_cmin, e_cmax, e_ign, e_histmode,
+                            e_bins, e_optref, e_clahe, e_size, e_ch]
 
-            # param controls passed to pp_add (order MUST match _build_step)
-            pp_param_inputs = [pp_intmode, pp_spk, pp_win, pp_enlauto, pp_enlval, pp_damp,
-                               pp_sigauto, pp_sigval, pp_cmin, pp_cmax, pp_ignore0,
-                               pp_histmode, pp_bins, pp_optref, pp_clahe, pp_size, pp_ch]
-            pp_add_btn.click(pp_add, inputs=[pp_steps, pp_addop] + pp_param_inputs,
-                             outputs=[pp_steps, pp_table])
-            pp_up_btn.click(pp_up, inputs=[pp_steps, pp_idx], outputs=[pp_steps, pp_table])
-            pp_down_btn.click(pp_down, inputs=[pp_steps, pp_idx], outputs=[pp_steps, pp_table])
-            pp_rm_btn.click(pp_remove, inputs=[pp_steps, pp_idx], outputs=[pp_steps, pp_table])
-            pp_reset_btn.click(pp_reset_steps, outputs=[pp_steps, pp_table])
+            # wiring
+            pp_add_btn.click(pp_add_category, inputs=[pp_steps, pp_addcat, pp_sel],
+                             outputs=[pp_steps, pp_table, pp_sel])
+            pp_up_btn.click(pp_move_up, inputs=[pp_steps, pp_sel],
+                            outputs=[pp_steps, pp_table, pp_sel])
+            pp_down_btn.click(pp_move_down, inputs=[pp_steps, pp_sel],
+                              outputs=[pp_steps, pp_table, pp_sel])
+            pp_rm_btn.click(pp_remove_sel, inputs=[pp_steps, pp_sel],
+                            outputs=[pp_steps, pp_table, pp_sel])
+            pp_reset_btn.click(pp_reset_steps, outputs=[pp_steps, pp_table, pp_sel])
+            pp_table.select(pp_on_select, inputs=[pp_steps],
+                            outputs=[pp_sel, pp_edit_panel, pp_edit_title] + edit_widgets)
+            e_method.change(pp_speckle_vis, inputs=e_method,
+                            outputs=[e_window, e_enlauto, e_enlval, e_damp, e_sigauto, e_sigval])
+            pp_apply_btn.click(pp_apply, inputs=[pp_steps, pp_sel] + edit_widgets,
+                               outputs=[pp_steps, pp_table])
 
             pp_io_inputs = [pp_steps, pp_in, pp_out, pp_max, pp_recursive, pp_shuffle]
 

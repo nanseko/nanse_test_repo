@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attention & 구조손실로 보는 할루시네이션 감소 (SAR 예시)</title>
+<style>
+  :root{--bg:#0f1420;--panel:#161d2e;--panel2:#1d2740;--ink:#e8edf7;--muted:#9fb0cc;--line:#2c3a5a;
+    --accent:#4f8cff;--green:#22c55e;--warn:#f59e0b;--pink:#ec4899;--orange:#f97316;--violet:#8b5cf6;--teal:#14b8a6;--red:#ef4444;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:linear-gradient(180deg,#0c111c,#0f1420 40%);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR","Malgun Gothic",sans-serif;line-height:1.7;}
+  header{padding:48px 24px 34px;text-align:center;border-bottom:1px solid var(--line);
+    background:radial-gradient(1200px 420px at 50% -40%, rgba(239,68,68,.18), rgba(249,115,22,.12), transparent);}
+  header h1{font-size:1.85rem;margin:0 0 10px;}
+  header p{color:var(--muted);margin:6px auto;max-width:820px;}
+  .badge{display:inline-block;background:var(--red);color:#2a0808;font-weight:700;padding:3px 12px;border-radius:999px;font-size:.78rem;margin-bottom:12px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px 90px;}
+  nav{position:sticky;top:0;z-index:30;background:rgba(12,17,28,.93);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:9px 16px;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+  nav a{color:var(--muted);text-decoration:none;font-size:.83rem;padding:5px 10px;border-radius:8px;}
+  nav a:hover{color:#fff;background:var(--panel2);}
+  section{margin-top:50px;}
+  h2{font-size:1.42rem;border-left:4px solid var(--red);padding-left:14px;margin:0 0 6px;}
+  h2 .num{color:var(--red);font-weight:800;margin-right:8px;}
+  h3{font-size:1.1rem;margin:16px 0 8px;color:#ffd0d0;}
+  .lead{color:var(--muted);margin:0 0 14px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:14px 0;}
+  code{background:#0d1426;border:1px solid var(--line);padding:1px 6px;border-radius:5px;font-size:.86em;color:#a7c4ff;}
+  .btn{cursor:pointer;border:none;border-radius:9px;padding:9px 16px;font-weight:700;font-size:.9rem;background:var(--orange);color:#1a1206;}
+  canvas{border:1px solid var(--line);border-radius:8px;width:150px;height:150px;background:#0a0f1c;}
+  .stage{display:flex;flex-direction:column;align-items:center;gap:5px;}
+  .cap{font-size:.76rem;color:var(--muted);text-align:center;}
+  .row{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;justify-content:center;}
+  .grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;}
+  @media(max-width:820px){.grid4{grid-template-columns:repeat(2,1fr);}}
+  .tag{font-size:.74rem;font-weight:700;padding:2px 8px;border-radius:6px;}
+  .t-no{background:rgba(239,68,68,.16);color:#fca5a5;border:1px solid #b91c1c;}
+  .t-att{background:rgba(249,115,22,.18);color:#fdba74;border:1px solid #b45309;}
+  .t-grad{background:rgba(79,140,255,.18);color:#bcd3ff;border:1px solid #3b6fd4;}
+  .t-both{background:rgba(34,197,94,.18);color:#86efac;border:1px solid #15803d;}
+  .barwrap{width:150px;height:14px;background:#0d1426;border:1px solid var(--line);border-radius:7px;overflow:hidden;}
+  .barfill{height:100%;background:linear-gradient(90deg,#22c55e,#f59e0b,#ef4444);transition:width .6s;}
+  .score{font-size:.78rem;color:var(--muted);}
+  .toggle{display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:center;margin:8px 0;}
+  .toggle label{display:flex;align-items:center;gap:6px;font-size:.92rem;background:#0d1426;border:1px solid var(--line);border-radius:8px;padding:7px 13px;cursor:pointer;}
+  .note{border-left:4px solid var(--warn);background:rgba(245,158,11,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:12px 0;}
+  .key{border-left:4px solid var(--green);background:rgba(34,197,94,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:12px 0;}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.9rem;}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;}
+  th{background:var(--panel2);}
+  .legend span{margin-right:14px;font-size:.82rem;}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:middle;}
+</style>
+</head>
+<body>
+<header>
+  <div class="badge">할루시네이션 감소 · SAR 예시</div>
+  <h1>Attention과 구조손실은 할루시네이션을 줄일까?</h1>
+  <p>합성 SAR 입력에서 G가 만들어내는 <b>허상(없는 구조·색 얼룩)</b>을 빨갛게 표시하고,
+     <b>Attention</b>과 <b>구조손실(lambda_grad)</b>을 켜고 끄며 허상이 어떻게 줄어드는지 직접 비교합니다.</p>
+</header>
+
+<nav>
+  <a href="#what">1. 허상이란</a>
+  <a href="#grid">2. 4가지 비교 ▶</a>
+  <a href="#play">3. 직접 토글 ▶</a>
+  <a href="#why">4. 왜/한계</a>
+</nav>
+
+<div class="wrap">
+
+<!-- 1 -->
+<section id="what">
+  <h2><span class="num">1</span>할루시네이션(허상)이란?</h2>
+  <div class="card">
+    <div class="row">
+      <div class="stage"><canvas id="c-sar"></canvas><div class="cap">입력 SAR (real_A)</div></div>
+      <div class="stage"><canvas id="c-truth"></canvas><div class="cap">실제 구조(정답 참고)</div></div>
+      <div class="stage"><canvas id="c-ghost"></canvas><div class="cap">G가 지어낸 가짜 구조<br>(ghost, GAN이 유발)</div></div>
+    </div>
+    <div style="text-align:center;margin-top:10px;"><button class="btn" id="regen">🎲 새 SAR 장면</button></div>
+    <p style="font-size:.92rem;margin-top:10px;">허상은 두 종류 — ① <b>speckle 잡음</b>이 가짜 색 얼룩이 되는 것,
+      ② GAN이 "그럴듯하지만 입력에 없는" <b>구조(ghost 줄무늬/얼룩)</b>를 지어내는 것. 아래에서 둘을 빨갛게 표시합니다.</p>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="grid">
+  <h2><span class="num">2</span>4가지 조합 비교 (할루시네이션 빨강 표시)</h2>
+  <p class="lead">같은 입력에 대해 Attention·구조손실 조합별 fake Optical과 <b>할루시네이션 지수</b>(낮을수록 좋음)입니다.</p>
+  <div class="card">
+    <div class="toggle">
+      <label><input type="checkbox" id="show-h" checked> 할루시네이션 빨강 오버레이</label>
+    </div>
+    <div class="grid4">
+      <div class="stage"><canvas id="g-base"></canvas><div class="cap"><span class="tag t-no">기본</span><br>Attention❌ 구조손실❌</div>
+        <div class="barwrap"><div class="barfill" id="b-base"></div></div><div class="score" id="s-base"></div></div>
+      <div class="stage"><canvas id="g-att"></canvas><div class="cap"><span class="tag t-att">+Attention</span><br>잡음 허상↓</div>
+        <div class="barwrap"><div class="barfill" id="b-att"></div></div><div class="score" id="s-att"></div></div>
+      <div class="stage"><canvas id="g-grad"></canvas><div class="cap"><span class="tag t-grad">+구조손실</span><br>구조 허상↓</div>
+        <div class="barwrap"><div class="barfill" id="b-grad"></div></div><div class="score" id="s-grad"></div></div>
+      <div class="stage"><canvas id="g-both"></canvas><div class="cap"><span class="tag t-both">둘 다</span><br>최소</div>
+        <div class="barwrap"><div class="barfill" id="b-both"></div></div><div class="score" id="s-both"></div></div>
+    </div>
+    <div class="legend" style="text-align:center;margin-top:10px;">
+      <span><span class="dot" style="background:#ef4444"></span>빨강 = 허상(입력에 없는 구조/색 얼룩)</span>
+    </div>
+    <div class="key" style="margin-top:10px;">
+      <b>+Attention</b>은 speckle 색 얼룩(잡음 허상)을 크게 줄이고, <b>+구조손실</b>은 지어낸 줄무늬(구조 허상)를 줄입니다.
+      <b>둘 다</b> 켜면 빨강이 가장 적습니다. → 서로 다른 종류의 허상을 각각 잡습니다.
+    </div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section id="play">
+  <h2><span class="num">3</span>직접 켜보기</h2>
+  <p class="lead">체크박스로 켜고 끄면 fake Optical과 할루시네이션 지수가 실시간으로 바뀝니다.</p>
+  <div class="card">
+    <div class="toggle">
+      <label><input type="checkbox" id="ck-att"> Attention (encoder/resblock)</label>
+      <label><input type="checkbox" id="ck-grad"> 구조손실 lambda_grad</label>
+    </div>
+    <div class="row" style="align-items:center;">
+      <div class="stage"><canvas id="i-sar"></canvas><div class="cap">입력 SAR</div></div>
+      <div style="font-size:1.3rem;color:#4a5a7e">→</div>
+      <div class="stage"><canvas id="i-fake"></canvas><div class="cap">fake Optical (허상 빨강)</div></div>
+      <div class="card" style="margin:0;background:var(--panel2);min-width:220px;text-align:center;">
+        <div style="font-size:.85rem;color:var(--muted)">할루시네이션 지수 (낮을수록 좋음)</div>
+        <div style="font-size:1.7rem;font-weight:800;" id="i-score">·</div>
+        <div class="barwrap" style="width:100%;margin:6px auto 0;"><div class="barfill" id="i-bar"></div></div>
+        <div id="i-comment" style="font-size:.82rem;color:var(--muted);margin-top:8px;"></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section id="why">
+  <h2><span class="num">4</span>정리 — 무엇이 어떤 허상을 잡나 (그리고 한계)</h2>
+  <div class="card">
+    <table>
+      <tr><th>수단</th><th>주로 줄이는 허상</th><th>원리</th></tr>
+      <tr><td><span class="tag t-att">Attention</span> (encoder/resblock, coord)</td><td>잡음 기반(색 얼룩) + 일부 구조</td><td>speckle 억제 + PatchNCE tap 특징 정제 → 내용 보존↑</td></tr>
+      <tr><td><span class="tag t-grad">구조손실 lambda_grad</span></td><td>구조 기반(지어낸 경계)</td><td>입력↔출력 에지 일치 강제</td></tr>
+      <tr><td>전처리 speckle 필터</td><td>잡음 기반(입력 단계)</td><td>잡음을 입력에서 제거</td></tr>
+    </table>
+    <div class="note">
+      <b>한계:</b> Attention은 GAN이 "사실적으로 보이려고" 만드는 <b>의미적 허상</b>(그럴듯한 가짜 디테일)까지는 못 막습니다.
+      또 <b>디코더 attention</b>은 PatchNCE 통제 밖이라 오히려 질감 합성을 키워 허상을 늘릴 수 있습니다.
+      그래서 attention은 <b>encoder/resblock에 두고, 구조·색 손실과 함께</b> 쓰는 것이 정답입니다.
+    </div>
+    <div class="key">한 줄: <b>Attention은 허상을 "줄여줄 수 있다"(특히 잡음 기반).</b> 단독 해결책은 아니며,
+      구조손실(lambda_grad)·speckle 전처리와 <b>조합</b>할 때 가장 효과적입니다.</div>
+  </div>
+</section>
+
+</div>
+<footer style="border-top:1px solid var(--line);padding:22px;text-align:center;color:var(--muted);font-size:.85rem;">
+  할루시네이션 감소 시각화 · 관련 코드: attention(modules/attention.py), lambda_grad(modules/losses.py), 전처리(preprocessing/)
+</footer>
+
+<script>
+const W=120,H=120;
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function ci(v,a,b){return v<a?a:v>b?b:v;}
+function buildStructure(seed){
+  const r=mulberry32(seed);const ph=[];for(let i=0;i<6;i++)ph.push(r()*6.283);
+  const coastA=0.55+0.06*Math.sin(seed*1.3),roadB=0.2+0.5*r(),roadS=0.35+0.3*r();
+  const inten=new Float32Array(W*H),cls=new Uint8Array(W*H);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){const u=x/W,v=y/H,i=y*W+x;
+    let f=0.5+0.17*Math.sin(6*u+ph[0])+0.14*Math.sin(5*v+ph[1])+0.11*Math.sin(8*u+7*v+ph[2]);
+    const coast=v-(coastA+0.07*Math.sin(8*u+ph[3]));let c=0,val;
+    if(coast>0){c=1;val=0.16+0.05*Math.sin(22*u+ph[4]);}else{c=0;val=Math.min(1,Math.max(0.18,f));}
+    const road=Math.abs(v-(roadB+roadS*u+0.03*Math.sin(10*u)));if(road<0.013){c=2;val=0.88;}
+    inten[i]=val;cls[i]=c;}
+  return {inten,cls};
+}
+function speckle(inten,seed,s){const r=mulberry32(seed*7+3),o=new Float32Array(W*H);
+  for(let i=0;i<W*H;i++){const n=-Math.log(Math.max(1e-4,r()));o[i]=ci(inten[i]*(1-s+s*n),0,1);}return o;}
+function blur(a,r){const t=new Float32Array(W*H),o=new Float32Array(W*H);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){let s=0,c=0;for(let k=-r;k<=r;k++){const xx=x+k;if(xx>=0&&xx<W){s+=a[y*W+xx];c++;}}t[y*W+x]=s/c;}
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){let s=0,c=0;for(let k=-r;k<=r;k++){const yy=y+k;if(yy>=0&&yy<H){s+=t[yy*W+x];c++;}}o[y*W+x]=s/c;}return o;}
+function edges(a){const w=new Float32Array(W*H);
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;const gx=a[i+1]-a[i-1],gy=a[i+W]-a[i-W];w[i]=Math.min(1,Math.sqrt(gx*gx+gy*gy)*4.5);}
+  return blur(w,1);}
+function denoise(noisy,wt){const bl=blur(noisy,2),o=new Float32Array(W*H);for(let i=0;i<W*H;i++){const w=wt[i];o[i]=w*noisy[i]+(1-w)*bl[i];}return o;}
+function ghostField(seed){const r=mulberry32(seed*13+5),g=new Float32Array(W*H);const nb=3+((r()*3)|0);const B=[];
+  for(let i=0;i<nb;i++)B.push({x:r()*W,y:r()*H,rad:9+r()*16,ang:r()*6.28,amp:0.3+0.45*r()});
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){let v=0;for(const b of B){const dx=x-b.x,dy=y-b.y;
+    const al=dx*Math.cos(b.ang)+dy*Math.sin(b.ang),pe=-dx*Math.sin(b.ang)+dy*Math.cos(b.ang);
+    v+=b.amp*Math.exp(-(pe*pe)/8-(al*al)/(2*b.rad*b.rad));}g[y*W+x]=Math.min(1,v);}
+  return g;}
+function gray(a){const im=new Uint8ClampedArray(W*H*4);for(let i=0;i<W*H;i++){const v=Math.round(ci(a[i],0,1)*255),j=i*4;im[j]=im[j+1]=im[j+2]=v;im[j+3]=255;}return im;}
+function heat(a){const im=new Uint8ClampedArray(W*H*4);for(let i=0;i<W*H;i++){const v=ci(a[i],0,1),j=i*4;im[j]=Math.round(40+215*v);im[j+1]=Math.round(30+120*v);im[j+2]=Math.round(60+20*v);im[j+3]=255;}return im;}
+function colorize(inten,cls,noise){const im=new Uint8ClampedArray(W*H*4);
+  for(let i=0;i<W*H;i++){let v=ci(inten[i],0,1),R,G,Bv;
+    if(cls[i]===1){R=20+40*v;G=60+80*v;Bv=130+110*v;}else if(cls[i]===2){R=G=Bv=150+80*v;}else{R=70+120*v;G=95+120*v;Bv=45+55*v;}
+    if(noise){const n=(noise[i]-0.5)*120;R+=n;G+=n*0.65;Bv+=n*0.35;}
+    const j=i*4;im[j]=ci(R,0,255);im[j+1]=ci(G,0,255);im[j+2]=ci(Bv,0,255);im[j+3]=255;}return im;}
+function hallucMap(outInt,inInt,noise){const oe=edges(outInt),ie=blur(edges(inInt),2),hm=new Float32Array(W*H);
+  for(let i=0;i<W*H;i++){const fab=Math.max(0,oe[i]-ie[i]*1.3);const nh=noise?Math.abs(noise[i]-0.5)*0.55:0;hm[i]=ci(fab*1.7+nh,0,1);}return hm;}
+function overlay(fake,hm){const im=fake.slice();for(let i=0;i<W*H;i++){const a=hm[i];if(a>0.12){const j=i*4;im[j]=ci(im[j]*(1-a)+255*a,0,255);im[j+1]=ci(im[j+1]*(1-a),0,255);im[j+2]=ci(im[j+2]*(1-a),0,255);}}return im;}
+function paint(id,data){const cv=document.getElementById(id);cv.width=W;cv.height=H;cv.getContext('2d').putImageData(new ImageData(data,W,H),0,0);}
+
+let S={};
+function genFake(att,grad){
+  const base=att?S.den:S.noisy;
+  const gstr=grad?0.06:(att?0.45:0.95);          // grad loss strongly removes ghosts; attention helps some
+  const noise=att?null:S.noisy;                   // attention removes speckle colour blotches
+  const out=new Float32Array(W*H);for(let i=0;i<W*H;i++)out[i]=ci(base[i]+S.ghost[i]*gstr,0,1);
+  const fake=colorize(out,S.A.cls,noise);
+  const hm=hallucMap(out,S.A.inten,noise);
+  let sc=0;for(let i=0;i<W*H;i++)sc+=hm[i];sc/=W*H;
+  return {fake,hm,score:sc};
+}
+function setBar(barId,scoreId,score){
+  const pct=Math.min(100,score*650);
+  document.getElementById(barId).style.width=pct+'%';
+  document.getElementById(scoreId).textContent=(score*100).toFixed(1);
+}
+function rebuild(seed){
+  const A=buildStructure(seed);
+  S={A,noisy:speckle(A.inten,seed,0.8)};
+  S.weight=edges(A.inten);S.den=denoise(S.noisy,S.weight);S.ghost=ghostField(seed);
+  paint('c-sar',gray(S.noisy));paint('c-truth',gray(A.inten));paint('c-ghost',gray(S.ghost));
+  renderGrid();renderPlay();
+}
+function renderGrid(){
+  const show=document.getElementById('show-h').checked;
+  [['g-base','b-base','s-base',false,false],
+   ['g-att','b-att','s-att',true,false],
+   ['g-grad','b-grad','s-grad',false,true],
+   ['g-both','b-both','s-both',true,true]].forEach(([cid,bid,sid,att,grad])=>{
+    const f=genFake(att,grad);paint(cid,show?overlay(f.fake,f.hm):f.fake);setBar(bid,sid,f.score);
+  });
+}
+function renderPlay(){
+  const att=document.getElementById('ck-att').checked,grad=document.getElementById('ck-grad').checked;
+  const show=document.getElementById('show-h').checked;
+  const f=genFake(att,grad);
+  paint('i-sar',gray(S.noisy));paint('i-fake',show?overlay(f.fake,f.hm):f.fake);
+  document.getElementById('i-score').textContent=(f.score*100).toFixed(1);
+  setBar('i-bar','i-score-x',f.score); // i-score-x unused; set bar width
+  document.getElementById('i-bar').style.width=Math.min(100,f.score*650)+'%';
+  const c=document.getElementById('i-comment');
+  if(att&&grad)c.textContent='✅ 잡음+구조 허상 모두 억제 — 가장 깨끗';
+  else if(att)c.textContent='잡음 색 얼룩↓ (지어낸 구조는 일부 남음)';
+  else if(grad)c.textContent='지어낸 구조↓ (speckle 색 얼룩은 일부 남음)';
+  else c.textContent='⚠ 허상 많음 (Attention/구조손실 모두 꺼짐)';
+}
+document.getElementById('regen').onclick=()=>rebuild((Math.random()*1000)|0);
+document.getElementById('show-h').addEventListener('change',()=>{renderGrid();renderPlay();});
+document.getElementById('ck-att').addEventListener('change',renderPlay);
+document.getElementById('ck-grad').addEventListener('change',renderPlay);
+rebuild(42);
+</script>
+</body>
+</html>

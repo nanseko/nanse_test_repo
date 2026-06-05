@@ -129,21 +129,22 @@ drive.mount('/content/drive')
   (설정은 `gui_config.json` 에 저장되므로, 같은 설정으로 GUI를 켜면 자동 복원됩니다.)
 - 별도 학습 없이 추론만 하려면, 학습 때 쓰던 설정 그대로 두고 탭 6만 실행하면 됩니다.
 
-## SAR 전처리 (탭 7)
+## SAR 전처리 (탭 2, 학습 전)
 
 `docs/README_pipeline.md` 설계를 구현한 모듈형 SAR 전처리 파이프라인입니다.
+전처리는 학습 **전** 단계라 데이터 폴더(탭 1) 바로 옆 **탭 2**에 배치되어 있습니다.
 (코드: `preprocessing/`, CLI: `scripts/preprocess_pipeline.py`)
 
-- **모듈형 스텝**: validate → intensity(log1p/db) → speckle → clipping → histogram →
-  resize → channel(3ch) → normalize. 각 스텝을 체크박스로 **On/Off**(추가/삭제) 가능.
-- **Speckle 필터 1개 선택**: `lee / frost / refined_lee(기본) / gamma_map / bm3d`.
-  순수 NumPy 구현이라 어디서나 동작(`bm3d`는 패키지 없으면 refined_lee로 자동 대체).
-- **Outlier clipping**: min/max percentile (기본 0.2 / 99.8), 0값 제외 옵션.
-- **Histogram mapping**: `sar_only`(optical_like_v1 톤커브) / `unpaired_optical_reference`
-  (optical 폴더 분포로 매핑) / `preset`. CLAHE는 opencv 있으면 적용.
+- **순서 직접 구성**: "추가할 스텝"을 골라 `➕ 추가`, `⬆/⬇` 이동, `🗑 삭제`, `↺ 기본 순서`로
+  파이프라인을 **원하는 순서**로 만듭니다. 같은 speckle을 **Lee → Frost** 처럼 여러 번 넣을 수 있고,
+  현재 표(#·스텝·파라미터)가 실행 순서입니다.
+- **Speckle 필터별 파라미터**: 필터를 고르면 해당 파라미터만 표시됩니다 —
+  `lee/refined_lee/gamma_map`=window+ENL, `frost`=+damping, `bm3d`=sigma.
+  순수 NumPy 구현(`bm3d` 없으면 refined_lee로 자동 대체).
+- **Clipping/Histogram**: percentile clipping, `sar_only / unpaired_optical_reference / preset`
+  histogram 매핑, CLAHE(opencv 있으면).
 - **미리보기**: 첫 이미지 Before/After 즉시 확인.
 - **실행**: 진행 로그 + Before|After 갤러리, `output/images`, `manifest.csv`, `logs/` 저장.
-- **CUT layout export**: 전처리 결과를 `datasets/M4-SAR-cut/{trainA,testA}`(+optical 폴더 지정 시
-  `trainB,testB`)로 export → 그대로 탭 1/5 학습에 연결.
+- **CUT layout export**: `datasets/M4-SAR-cut/{trainA,testA}`(+optical 지정 시 `trainB,testB`)로 export.
 
 > CLI 예시: `python scripts/preprocess_pipeline.py --input_dir ./raw_sar --output_dir ./pre --max_items 100 --speckle_method refined_lee`

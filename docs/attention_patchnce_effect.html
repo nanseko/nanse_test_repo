@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Attention ↔ PatchNCE — tap 위치/밖의 효과 (초보자용)</title>
+<style>
+  :root{
+    --bg:#0f1420; --panel:#161d2e; --panel2:#1d2740;
+    --ink:#e8edf7; --muted:#9fb0cc; --line:#2c3a5a;
+    --accent:#4f8cff; --green:#22c55e; --warn:#f59e0b; --pink:#ec4899; --orange:#f97316; --violet:#8b5cf6; --teal:#14b8a6; --gray:#64748b;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  body{margin:0;background:linear-gradient(180deg,#0c111c,#0f1420 40%);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR","Malgun Gothic",sans-serif;line-height:1.75;font-size:16px;}
+  header{padding:54px 24px 40px;text-align:center;border-bottom:1px solid var(--line);
+    background:radial-gradient(1200px 440px at 50% -40%, rgba(236,72,153,.18), rgba(249,115,22,.12), transparent);}
+  header h1{font-size:1.95rem;margin:0 0 10px;letter-spacing:-.5px;}
+  header p{color:var(--muted);margin:6px auto;max-width:820px;}
+  .badge{display:inline-block;background:var(--pink);color:#250716;font-weight:700;padding:3px 12px;border-radius:999px;font-size:.78rem;margin-bottom:14px;}
+  .wrap{max-width:1040px;margin:0 auto;padding:0 24px 90px;}
+  nav{position:sticky;top:0;z-index:30;background:rgba(12,17,28,.93);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:9px 16px;display:flex;gap:5px;flex-wrap:wrap;justify-content:center;}
+  nav a{color:var(--muted);text-decoration:none;font-size:.82rem;padding:5px 10px;border-radius:8px;}
+  nav a:hover{color:#fff;background:var(--panel2);}
+  section{margin-top:54px;}
+  h2{font-size:1.5rem;border-left:4px solid var(--pink);padding-left:14px;margin:0 0 6px;}
+  h2 .num{color:var(--pink);font-weight:800;margin-right:8px;}
+  h3{font-size:1.15rem;margin:22px 0 8px;color:#ffd9ec;}
+  .lead{color:var(--muted);margin:0 0 16px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px 22px;margin:16px 0;}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:18px;}
+  @media(max-width:860px){.grid2{grid-template-columns:1fr;}}
+  code{background:#0d1426;border:1px solid var(--line);padding:1px 6px;border-radius:5px;font-size:.86em;color:#a7c4ff;font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace;}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:.92rem;}
+  th,td{border:1px solid var(--line);padding:9px 12px;text-align:left;vertical-align:top;}
+  th{background:var(--panel2);color:#ffd9ec;}
+  .note{border-left:4px solid var(--warn);background:rgba(245,158,11,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;}
+  .key{border-left:4px solid var(--green);background:rgba(34,197,94,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;}
+  .ana{border-left:4px solid var(--violet);background:rgba(139,92,246,.10);padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;}
+  .btn{cursor:pointer;border:none;border-radius:9px;padding:10px 18px;font-weight:700;font-size:.92rem;background:var(--orange);color:#1a1206;}
+  .btn.off{background:var(--panel2);color:var(--ink);border:1px solid var(--line);}
+  .legend span{margin-right:14px;font-size:.84rem;}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:middle;}
+  canvas{max-width:100%;height:auto;background:#0a0f1c;border:1px solid var(--line);border-radius:10px;}
+  /* matrix */
+  .mat{display:grid;grid-template-columns:auto repeat(6,38px);gap:3px;align-items:center;}
+  .mcell{width:38px;height:38px;border-radius:5px;display:grid;place-items:center;font-size:.68rem;color:#06122c;font-weight:700;}
+  .mhead{font-size:.66rem;color:var(--muted);text-align:center;}
+  .mdiag{outline:2px solid #fff;outline-offset:-2px;}
+  .big{font-size:1.6rem;font-weight:800;}
+  /* pipeline */
+  #pipe{display:flex;flex-wrap:wrap;gap:5px;align-items:stretch;justify-content:center;margin:8px 0 30px;}
+  .pblock{position:relative;min-width:78px;border-radius:9px;border:1.5px solid;padding:9px 6px 20px;text-align:center;font-size:.76rem;background:var(--panel2);}
+  .pblock small{display:block;color:var(--muted);font-size:.62rem;}
+  .b-io{border-color:#64748b;background:#1b2336;}
+  .b-enc{border-color:#3b82f6;background:rgba(59,130,246,.12);}
+  .b-res{border-color:#8b5cf6;background:rgba(139,92,246,.12);}
+  .b-dec{border-color:#14b8a6;background:rgba(20,184,166,.12);}
+  .att{position:absolute;top:-9px;right:-7px;font-size:.58rem;font-weight:800;padding:1px 5px;border-radius:6px;animation:pop .3s;}
+  .att-direct{background:#ec4899;color:#250716;}
+  .att-indirect{background:#64748b;color:#0b1020;}
+  @keyframes pop{from{transform:scale(0);}to{transform:scale(1);}}
+  .tap{position:absolute;bottom:-22px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:.58rem;color:#f9a8d4;border:1px solid #9d2667;background:rgba(236,72,153,.12);border-radius:5px;padding:0 5px;}
+  .arrowx{align-self:center;color:#4a5a7e;}
+  .toggle{display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin:6px 0;}
+  .toggle label{display:flex;align-items:center;gap:6px;font-size:.9rem;background:#0d1426;border:1px solid var(--line);border-radius:8px;padding:6px 12px;cursor:pointer;}
+  footer{border-top:1px solid var(--line);margin-top:60px;padding:24px;text-align:center;color:var(--muted);font-size:.85rem;}
+</style>
+</head>
+<body>
+<header>
+  <div class="badge">ATTENTION ↔ PATCHNCE · 초보자용</div>
+  <h1>Attention은 PatchNCE에 어떤 영향을 줄까?</h1>
+  <p>① tap(=PatchNCE가 읽는 지점)에 Attention을 넣으면 무슨 일이 일어나는지,
+     ② 반대로 tap이 <b>없는 곳</b>(디코더 등)에 Attention을 넣으면 어떤 효과가 있는지를
+     움직이는 그림과 직접 만지는 도표로 설명합니다.</p>
+</header>
+
+<nav>
+  <a href="#recap">0. tap 복습</a>
+  <a href="#attap">1. tap에 Attention ▶</a>
+  <a href="#why">2. 왜 또렷해지나</a>
+  <a href="#offtap">3. tap 밖 Attention ▶</a>
+  <a href="#paths">4. 두 경로 ▶</a>
+  <a href="#pipe">5. 위치별 정리 ▶</a>
+  <a href="#summary">6. 요약</a>
+</nav>
+
+<div class="wrap">
+
+<!-- 0 -->
+<section id="recap">
+  <h2><span class="num">0</span>복습: PatchNCE가 읽는 곳은 5군데뿐</h2>
+  <div class="card">
+    <p>PatchNCE는 생성기 전체가 아니라 <b>정해진 5개 지점(tap)</b>의 특징만 패치로 뽑아 비교합니다.</p>
+    <div class="legend"><span style="color:#f9a8d4">tap = </span>
+      <code>입력픽셀</code> · <code>enc_conv1</code> · <code>enc_conv2</code> · <code>resblock_0</code> · <code>resblock_4</code></div>
+    <div class="key" style="margin-top:12px;">즉 <b>디코더</b>와 <b>후반 ResBlock(5~8)</b>은 tap이 아닙니다. 여기에 넣은 Attention은
+      PatchNCE가 "직접" 보지 않습니다 — 이게 이 문서의 핵심 주제입니다.</div>
+  </div>
+</section>
+
+<!-- 1 -->
+<section id="attap">
+  <h2><span class="num">1</span>tap에 Attention을 넣으면 — PatchNCE가 "비교하는 패치 자체"가 바뀐다</h2>
+  <p class="lead">PatchNCE는 tap의 특징 → 패치 임베딩 → 유사도 행렬 → 손실 순으로 계산됩니다.
+     Attention이 tap의 특징을 다듬으면 <b>이 행렬이 통째로 바뀝니다.</b> 아래 버튼으로 직접 보세요.</p>
+  <div class="card">
+    <div style="text-align:center;margin-bottom:10px;">
+      <button class="btn" id="att-btn">tap 위치 Attention: <span id="att-state">OFF</span></button>
+    </div>
+    <div style="display:flex;gap:26px;flex-wrap:wrap;justify-content:center;align-items:flex-start;">
+      <div>
+        <div style="font-size:.78rem;color:var(--muted);text-align:center;margin-bottom:4px;">유사도 행렬 (행=출력패치, 열=입력패치)</div>
+        <div class="mat" id="simmat"></div>
+        <div style="font-size:.66rem;color:var(--muted);text-align:center;margin-top:6px;">대각선(흰 테두리)=같은 위치=정답 · 밝을수록 확률↑</div>
+      </div>
+      <div class="card" style="margin:0;background:var(--panel2);min-width:230px;text-align:center;">
+        <div style="font-size:.85rem;color:var(--muted)">이 층의 PatchNCE 손실</div>
+        <div class="big" id="nce-val" style="color:#ec4899">·</div>
+        <div id="nce-comment" style="font-size:.84rem;color:var(--muted);margin-top:6px;"></div>
+      </div>
+    </div>
+    <div class="key" style="margin-top:14px;">
+      Attention을 켜면 <b>대각선(정답)이 밝아지고</b> 나머지가 어두워집니다 → 정답 확률↑ → <b>PatchNCE 손실↓</b>.
+      즉 tap에 넣은 Attention은 "PatchNCE가 정답을 더 쉽게 맞히도록" 패치를 정리해줍니다. = 구조 보존 신호 강화.
+    </div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="why">
+  <h2><span class="num">2</span>왜 또렷해질까 — 같은 위치 패치를 "더 구별되게" 만든다</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3 style="margin-top:0;">Attention 전</h3>
+      <p style="font-size:.92rem;">잡음(speckle)·불필요한 채널이 섞여 있어, 출력 패치가 입력의 <b>여러 위치와 비슷</b>해 보입니다.
+        → 정답(같은 위치)과 오답이 헷갈림 → 손실 큼.</p>
+    </div>
+    <div class="card" style="border-color:var(--orange);">
+      <h3 style="margin-top:0;">Attention 후</h3>
+      <p style="font-size:.92rem;">중요한 구조·채널만 강조되어 각 위치의 특징이 <b>또렷이 구별</b>됩니다.
+        → 정답 위치와만 유사, 다른 위치와는 멀어짐 → 손실 작음.</p>
+    </div>
+  </div>
+  <div class="ana"><b>비유:</b> 흐릿한 졸업사진(Attention 전)에서 친구 찾기는 어렵지만, 또렷한 사진(Attention 후)에선 쉽습니다.
+    Attention은 PatchNCE라는 "짝 찾기 게임"의 사진 해상도를 높여주는 셈입니다.</div>
+</section>
+
+<!-- 3 -->
+<section id="offtap">
+  <h2><span class="num">3</span>반대로, tap이 없는 곳(디코더)에 Attention을 넣으면?</h2>
+  <p class="lead">디코더 특징은 PatchNCE가 패치로 읽지 않습니다. 그래서 <b>유사도 행렬을 직접 바꾸지 않습니다.</b>
+     대신 다른 일을 합니다.</p>
+  <div class="card">
+    <div class="grid2">
+      <div>
+        <h3 style="margin-top:0;color:#8ff0e2;">디코더 Attention이 하는 일</h3>
+        <ul style="font-size:.93rem;">
+          <li><b>출력 이미지의 외형</b>(색·질감·디테일)을 직접 다듬습니다.</li>
+          <li>주 감독관은 <b>GAN loss</b>(진짜 같은가?)입니다.</li>
+          <li>PatchNCE는 <b>직접</b> 관여하지 않습니다(간접 영향만 — 4장).</li>
+        </ul>
+      </div>
+      <div>
+        <h3 style="margin-top:0;color:#fca5a5;">그래서 생기는 차이</h3>
+        <ul style="font-size:.93rem;">
+          <li>구조 보존(도로·경계)보다 <b>색 변환·질감 표현</b>에 영향이 큼.</li>
+          <li>강하게 쓰면 입력에 없던 <b>artifact</b>가 생길 수 있음(통제하는 NCE 신호가 약하므로).</li>
+          <li>그래서 "encoder+resblocks로 먼저 검증 후 선택적으로" 권장.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="note">정리: <b>tap 위치 Attention = 콘텐츠(구조) 보존을 직접 강화</b>,
+      <b>tap 밖(디코더) Attention = 출력 외형(스타일)을 다듬되 PatchNCE 통제 밖.</b></div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section id="paths">
+  <h2><span class="num">4</span>두 갈래 gradient 경로 (애니메이션)</h2>
+  <p class="lead">"디코더 Attention은 PatchNCE와 완전히 무관한가?" 아닙니다 — <b>약하고 간접적인</b> 연결은 있습니다.
+     생성 이미지(fake_B)가 다시 인코더로 들어가 비교되기 때문입니다.</p>
+  <div class="card">
+    <canvas id="paths-cv" width="900" height="300"></canvas>
+    <div class="legend" style="margin-top:8px;">
+      <span><span class="dot" style="background:#f97316"></span>GAN loss (직접·강함)</span>
+      <span><span class="dot" style="background:#ec4899"></span>PatchNCE (간접·약함, fake_B 되먹임)</span>
+    </div>
+    <div class="key" style="margin-top:10px;">디코더 Attention → 출력 fake_B에 영향 → ① <b>GAN loss</b>가 굵게 직접 학습(스타일),
+      ② fake_B가 인코더로 되먹여져 PatchNCE에 <b>가늘게 간접</b> 전달. 그래서 "구조 보존" 신호로는 약합니다.</div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="pipe">
+  <h2><span class="num">5</span>위치별로 한눈에 — 어떤 Attention이 PatchNCE를 직접 받나 (토글)</h2>
+  <p class="lead">체크박스로 Attention을 켜보세요. <span style="color:#f9a8d4">분홍 배지</span>=PatchNCE 직접,
+     <span style="color:#94a3b8">회색 배지</span>=tap 밖(GAN 주도·NCE 간접).</p>
+  <div class="card">
+    <div class="toggle">
+      <label><input type="checkbox" id="ck-enc" checked> Encoder</label>
+      <label><input type="checkbox" id="ck-res" checked> ResBlocks</label>
+      <label><input type="checkbox" id="ck-dec"> Decoder</label>
+    </div>
+    <div id="pipe"></div>
+    <div class="legend" style="margin-top:6px;text-align:center;">
+      <span><span class="dot" style="background:#ec4899"></span>Attention · PatchNCE 직접</span>
+      <span><span class="dot" style="background:#64748b"></span>Attention · tap 밖(NCE 간접)</span>
+      <span><span class="dot" style="background:#f9a8d4"></span>NCE tap</span>
+    </div>
+    <div id="pipe-note" class="card" style="margin-top:12px;background:var(--panel2);"></div>
+  </div>
+  <table>
+    <tr><th>Attention 위치</th><th>PatchNCE</th><th>주 감독 손실</th><th>주 효과</th></tr>
+    <tr><td>Encoder enc1/enc2 (tap)</td><td>✅ 직접</td><td>PatchNCE + GAN</td><td>구조 보존 강화</td></tr>
+    <tr><td>ResBlock 0~4 (tap 포함)</td><td>✅ 직접</td><td>PatchNCE + GAN</td><td>변환 핵심부 + 구조 보존</td></tr>
+    <tr><td>7×7 뒤(enc0)</td><td>△ tap 상류</td><td>PatchNCE(간접)+GAN</td><td>초기 잡음 억제</td></tr>
+    <tr><td>ResBlock 5~8</td><td>❌ tap 밖</td><td>GAN (+NCE 간접)</td><td>변환 후반 표현</td></tr>
+    <tr><td>Decoder</td><td>❌ tap 밖</td><td>GAN (+NCE 간접)</td><td>출력 색·질감</td></tr>
+  </table>
+</section>
+
+<!-- 6 -->
+<section id="summary">
+  <h2><span class="num">6</span>한 장 요약</h2>
+  <div class="card">
+    <ul>
+      <li><b>tap에 Attention</b> → PatchNCE가 읽는 패치를 정제 → 유사도 행렬의 대각선↑ → <b>NCE 손실↓ → 구조 보존 직접 강화.</b></li>
+      <li><b>tap 밖(디코더·후반 ResBlock)에 Attention</b> → PatchNCE가 직접 안 읽음 → 주로 <b>GAN loss로 출력 외형(색·질감)</b>을 다듬음.</li>
+      <li>디코더 Attention도 fake_B 되먹임으로 <b>약한 간접</b> NCE 신호는 받지만, 구조 보존 효과는 작음.</li>
+      <li>그래서 <b>구조 보존이 목표면 encoder+resblocks(tap)</b>, <b>출력 색/질감 다듬기가 목표면 decoder</b> — 목적에 맞게 위치를 고르세요.</li>
+    </ul>
+  </div>
+</section>
+
+</div>
+<footer>Attention ↔ PatchNCE 효과 해설 · 근거: <code>modules/cut_model.py</code>(nce_layers, Generator), <code>modules/losses.py</code>(PatchNCELoss)</footer>
+
+<script>
+/* ---------- seeded rng ---------- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+/* ---------- 1. similarity matrix toggle ---------- */
+(function(){
+  const M=6, tau=0.07; const r=mulberry32(7);
+  const Soff=[], Son=[];
+  for(let i=0;i<M;i++){Soff.push([]);Son.push([]);for(let j=0;j<M;j++){
+    if(i===j){Soff[i].push(0.50+0.10*r());Son[i].push(0.86+0.10*r());}
+    else{Soff[i].push(0.10+0.38*r());Son[i].push(0.04+0.18*r());}
+  }}
+  const mat=document.getElementById('simmat');
+  let t=0, target=0, anim=null;
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function softmax(row){const z=row.map(v=>v/tau);const m=Math.max(...z);const e=z.map(v=>Math.exp(v-m));const s=e.reduce((a,b)=>a+b,0);return e.map(v=>v/s);}
+  function heat(p){const R=Math.round(40+215*p),G=Math.round(45+15*p),B=Math.round(74+80*p);return`rgb(${R},${G},${B})`;}
+  function head(t){const d=document.createElement('div');d.className='mhead';d.textContent=t;return d;}
+  function render(){
+    mat.innerHTML=''; mat.appendChild(head(''));
+    for(let j=0;j<M;j++)mat.appendChild(head('입'+(j+1)));
+    let probs=[],loss=0;
+    for(let i=0;i<M;i++){const row=[];for(let j=0;j<M;j++)row.push(lerp(Soff[i][j],Son[i][j],t));probs.push(softmax(row));}
+    for(let i=0;i<M;i++){
+      mat.appendChild(head('출'+(i+1)));
+      for(let j=0;j<M;j++){const c=document.createElement('div');c.className='mcell'+(i===j?' mdiag':'');
+        c.style.background=heat(probs[i][j]);c.textContent=probs[i][j].toFixed(2);mat.appendChild(c);}
+      loss+=-Math.log(probs[i][i]+1e-9);
+    }
+    loss/=M;
+    document.getElementById('nce-val').textContent=loss.toFixed(3);
+    document.getElementById('nce-comment').textContent = t>0.5
+      ? '정답(대각선)이 또렷 → 손실 작음 ✅' : '정답이 흐릿 → 손실 큼';
+  }
+  function animateTo(tt){target=tt; if(anim)cancelAnimationFrame(anim);
+    function step(){ t+= (target-t)*0.12; if(Math.abs(target-t)<0.01){t=target;render();return;} render(); anim=requestAnimationFrame(step);} step(); }
+  document.getElementById('att-btn').onclick=()=>{
+    const on=target<0.5; document.getElementById('att-state').textContent=on?'ON':'OFF';
+    animateTo(on?1:0);
+  };
+  render();
+})();
+
+/* ---------- 4. two-path canvas ---------- */
+(function(){
+  const cv=document.getElementById('paths-cv'); if(!cv)return; const ctx=cv.getContext('2d');
+  if(!ctx.roundRect){ctx.roundRect=function(x,y,w,h,r){this.beginPath();this.moveTo(x+r,y);this.arcTo(x+w,y,x+w,y+h,r);this.arcTo(x+w,y+h,x,y+h,r);this.arcTo(x,y+h,x,y,r);this.arcTo(x,y,x+w,y,r);this.closePath();return this;};}
+  const W=cv.width,H=cv.height;
+  const dec={x:120,y:150,t:'Decoder\nAttention',c:'#8ff0e2'};
+  const fake={x:360,y:150,t:'출력 fake_B',c:'#cbd6f0'};
+  const gan={x:760,y:70,t:'GAN loss',c:'#fdba74'};
+  const enc={x:600,y:240,t:'Encoder',c:'#bcd3ff'};
+  const nce={x:790,y:240,t:'PatchNCE',c:'#f9a8d4'};
+  let parts=[],tick=0;
+  function node(o){ctx.fillStyle=o.c;ctx.roundRect(o.x-58,o.y-26,116,52,11);ctx.fill();
+    ctx.fillStyle='#06122c';ctx.font='bold 12px sans-serif';ctx.textAlign='center';
+    o.t.split('\n').forEach((l,i)=>ctx.fillText(l,o.x,o.y+(o.t.includes('\n')?(i*13-3):4)));}
+  function arrow(a,b,color,wd,dash){ctx.strokeStyle=color;ctx.lineWidth=wd;ctx.setLineDash(dash||[]);
+    ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);}
+  function frame(){
+    ctx.clearRect(0,0,W,H);
+    // pulse on decoder attention
+    const p=0.5+0.5*Math.sin(tick/12);
+    ctx.fillStyle=`rgba(20,184,166,${0.2+0.3*p})`;ctx.beginPath();ctx.arc(dec.x,dec.y,40+5*p,0,7);ctx.fill();
+    // arrows
+    arrow(dec,fake,'#5a6a8e',3);
+    arrow(fake,gan,'#f97316',5);                 // strong direct
+    arrow(fake,enc,'#ec4899',1.5,[5,5]);          // weak indirect
+    arrow(enc,nce,'#ec4899',1.5,[5,5]);
+    [dec,fake,gan,enc,nce].forEach(node);
+    ctx.fillStyle='#9fb0cc';ctx.font='11px sans-serif';ctx.textAlign='center';
+    ctx.fillText('직접·강함 (스타일/사실성)',(fake.x+gan.x)/2,55);
+    ctx.fillText('되먹임·간접·약함',(fake.x+enc.x)/2-10,205);
+    // particles
+    if(tick%6===0){parts.push({path:'gan',p:0});}
+    if(tick%26===0){parts.push({path:'nce',p:0});}
+    parts.forEach(o=>{o.p+=0.02;
+      let x,y;
+      if(o.path==='gan'){x=fake.x+(gan.x-fake.x)*o.p;y=fake.y+(gan.y-fake.y)*o.p;ctx.fillStyle='#f97316';}
+      else{ if(o.p<0.5){const q=o.p/0.5;x=fake.x+(enc.x-fake.x)*q;y=fake.y+(enc.y-fake.y)*q;}
+            else{const q=(o.p-0.5)/0.5;x=enc.x+(nce.x-enc.x)*q;y=enc.y+(nce.y-enc.y)*q;} ctx.fillStyle='#ec4899';}
+      ctx.beginPath();ctx.arc(x,y,o.path==='gan'?5:3,0,7);ctx.fill();});
+    parts=parts.filter(o=>o.p<1);
+    tick++;requestAnimationFrame(frame);
+  }
+  frame();
+})();
+
+/* ---------- 5. pipeline toggle ---------- */
+(function(){
+  const blocks=[
+    {t:'io',n:'입력',s:'SAR',tap:'입력픽셀'},
+    {t:'enc',n:'7×7',s:'64',att:'enc',cls:'indirect'},
+    {t:'enc',n:'Down',s:'128',att:'enc',cls:'direct',tap:'enc_conv1'},
+    {t:'enc',n:'Down',s:'256',att:'enc',cls:'direct',tap:'enc_conv2'},
+    {t:'res',n:'Res0',s:'256',att:'res',cls:'direct',tap:'resblock_0'},
+    {t:'res',n:'Res1~3',s:'256',att:'res',cls:'direct'},
+    {t:'res',n:'Res4',s:'256',att:'res',cls:'direct',tap:'resblock_4'},
+    {t:'res',n:'Res5~8',s:'256',att:'res',cls:'indirect'},
+    {t:'dec',n:'Up',s:'128',att:'dec',cls:'indirect'},
+    {t:'dec',n:'Up',s:'64',att:'dec',cls:'indirect'},
+    {t:'io',n:'출력',s:'Optical'},
+  ];
+  const cls={io:'b-io',enc:'b-enc',res:'b-res',dec:'b-dec'};
+  const pipe=document.getElementById('pipe');
+  function render(){
+    const on={enc:document.getElementById('ck-enc').checked,
+              res:document.getElementById('ck-res').checked,
+              dec:document.getElementById('ck-dec').checked};
+    pipe.innerHTML='';
+    blocks.forEach((b,i)=>{
+      if(i>0){const a=document.createElement('div');a.className='arrowx';a.textContent='▸';pipe.appendChild(a);}
+      const d=document.createElement('div');d.className='pblock '+cls[b.t];
+      d.innerHTML=`${b.n}<small>${b.s}ch</small>`;
+      if(b.att&&on[b.att]){const ab=document.createElement('div');
+        ab.className='att '+(b.cls==='direct'?'att-direct':'att-indirect');
+        ab.textContent=b.cls==='direct'?'NCE직접':'NCE간접';d.appendChild(ab);}
+      if(b.tap){const tp=document.createElement('div');tp.className='tap';tp.textContent='tap';d.appendChild(tp);}
+      pipe.appendChild(d);
+    });
+    const note=document.getElementById('pipe-note');
+    const msg=[];
+    if(on.enc)msg.push('Encoder: enc1/enc2는 tap이라 <b>PatchNCE 직접 강화</b>(7×7뒤는 상류·간접).');
+    if(on.res)msg.push('ResBlocks: 0~4는 tap이 커버해 <b>직접</b>, 5~8은 tap 밖이라 <b>간접</b>.');
+    if(on.dec)msg.push('Decoder: tap이 없어 <b>PatchNCE 직접 X</b> → GAN으로 출력 색·질감 위주.');
+    if(!on.enc&&!on.res&&!on.dec)msg.push('모두 OFF = 기존 CUT(attention_type=none).');
+    note.innerHTML=msg.join('<br>');
+  }
+  ['ck-enc','ck-res','ck-dec'].forEach(id=>document.getElementById(id).addEventListener('change',render));
+  render();
+})();
+</script>
+</body>
+</html>

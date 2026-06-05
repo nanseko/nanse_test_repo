@@ -839,6 +839,85 @@ def run_inference(weights_dir, input_dir, output_dir, *cfg_values):
 
 
 # --------------------------------------------------------------------------- #
+# SAR preprocessing callbacks (see docs/README_pipeline.md)
+# --------------------------------------------------------------------------- #
+
+# Order MUST match the inputs list wired to the buttons.
+def _pp_build_config(input_dir, output_dir, optical_ref, max_items, recursive, shuffle,
+                     en_validate, en_intensity, en_speckle, en_clip, en_hist,
+                     en_resize, en_channel,
+                     intensity_mode, speckle_method, window_size, enl_auto, enl_val,
+                     damping, clip_min, clip_max, ignore_zero,
+                     hist_mode, bins, clahe_on, image_size, output_channels):
+    import preprocessing as PP
+    cfg = PP.default_config()
+    cfg['io'].update(input_dir=input_dir, output_dir=output_dir,
+                     max_items=int(max_items or 0), recursive=bool(recursive),
+                     shuffle=bool(shuffle))
+    enl = 'auto' if enl_auto else float(enl_val)
+    en = {'validate_image': en_validate, 'sar_intensity_transform': en_intensity,
+          'speckle_filter': en_speckle, 'outlier_clipping': en_clip,
+          'histogram_mapping': en_hist, 'resize_or_tile': en_resize,
+          'channel_adapter': en_channel, 'normalize_for_cut': True}
+    for s in cfg['pipeline']['steps']:
+        s['enabled'] = bool(en.get(s['name'], True))
+        p = s['params']
+        if s['name'] == 'sar_intensity_transform':
+            p['mode'] = intensity_mode
+        elif s['name'] == 'speckle_filter':
+            p.update(method=speckle_method, window_size=int(window_size), enl=enl,
+                     damping_factor=float(damping))
+        elif s['name'] == 'outlier_clipping':
+            p.update(min_percentile=float(clip_min), max_percentile=float(clip_max),
+                     ignore_zero=bool(ignore_zero))
+        elif s['name'] == 'histogram_mapping':
+            p.update(mode=hist_mode, bins=int(bins),
+                     optical_reference_dir=(optical_ref or None))
+            p['clahe']['enabled'] = bool(clahe_on)
+        elif s['name'] == 'resize_or_tile':
+            p['image_size'] = int(image_size)
+        elif s['name'] == 'channel_adapter':
+            p['output_channels'] = int(output_channels)
+    return cfg
+
+
+def pp_preview(*args):
+    import os
+    import preprocessing as PP
+    cfg = _pp_build_config(*args)
+    files = PP.scan_images(cfg['io']['input_dir'], cfg['io'].get('recursive', True),
+                          False, 42, 1)
+    if not files:
+        return None, None, '입력 폴더에 이미지가 없습니다.'
+    try:
+        before, after = PP.preprocess_single(cfg, files[0])
+        return before, after, f'미리보기: {os.path.basename(files[0])}'
+    except Exception:
+        return None, None, '미리보기 오류:\n' + traceback.format_exc()
+
+
+def pp_run(*args):
+    import preprocessing as PP
+    cfg = _pp_build_config(*args)
+    try:
+        for log, prev in PP.run_pipeline(cfg):
+            yield log, prev
+    except Exception:
+        yield ('전처리 중 예외:\n' + traceback.format_exc(), [])
+
+
+def pp_export(output_dir, optical_dir, test_ratio, link_mode):
+    import os
+    import preprocessing as PP
+    sar_dir = os.path.join(output_dir, 'images')
+    try:
+        return PP.export_cut_layout(sar_dir, './datasets/M4-SAR-cut',
+                                    optical_dir or None, float(test_ratio), link_mode)
+    except Exception:
+        return 'export 오류:\n' + traceback.format_exc()
+
+
+# --------------------------------------------------------------------------- #
 # Build the Gradio UI
 # --------------------------------------------------------------------------- #
 
@@ -1036,6 +1115,91 @@ def build_ui():
             inf_btn.click(run_inference,
                           inputs=[inf_weights, inf_input, inf_output] + ordered_inputs,
                           outputs=[inf_status, inf_gallery])
+
+        # ---- Tab 7 : SAR Preprocessing -------------------------------- #
+        with gr.Tab('7. SAR 전처리'):
+            import preprocessing as PP
+            gr.Markdown(
+                'SAR 이미지를 CUT 입력용으로 전처리합니다 (speckle 제거 · clipping · '
+                'histogram 매핑 등). 스텝을 On/Off 하고, 미리보기로 확인한 뒤 실행하세요. '
+                '설계: `docs/README_pipeline.md`')
+
+            with gr.Accordion('① 폴더 / 데이터', open=True):
+                pp_in = gr.Textbox('./datasets/M4-SAR/raw_sar', label='입력 SAR 폴더')
+                pp_out = gr.Textbox('./datasets/M4-SAR-preprocessed', label='출력 폴더')
+                pp_optref = gr.Textbox('', label='Optical 참조 폴더 (histogram unpaired 모드 / 비우면 미사용)')
+                with gr.Row():
+                    pp_max = gr.Number(20, label='처리 개수 (0=전체)', precision=0)
+                    pp_recursive = gr.Checkbox(True, label='하위 폴더 포함')
+                    pp_shuffle = gr.Checkbox(False, label='섞기(shuffle)')
+
+            with gr.Accordion('② 파이프라인 스텝 On/Off (위→아래 순서로 실행)', open=True):
+                with gr.Row():
+                    pp_e_val = gr.Checkbox(True, label='validate')
+                    pp_e_int = gr.Checkbox(True, label='intensity')
+                    pp_e_spk = gr.Checkbox(True, label='speckle')
+                    pp_e_clip = gr.Checkbox(True, label='clipping')
+                with gr.Row():
+                    pp_e_hist = gr.Checkbox(True, label='histogram')
+                    pp_e_resize = gr.Checkbox(True, label='resize')
+                    pp_e_chan = gr.Checkbox(True, label='channel(3ch)')
+
+            with gr.Accordion('③ Intensity / Speckle 필터', open=True):
+                with gr.Row():
+                    pp_intmode = gr.Dropdown(PP.INTENSITY_MODES, value='log1p', label='intensity transform')
+                    pp_spk = gr.Dropdown(PP.SPECKLE_METHODS, value='refined_lee', label='speckle 필터 (1개)')
+                with gr.Row():
+                    pp_win = gr.Number(7, label='window_size', precision=0)
+                    pp_enlauto = gr.Checkbox(True, label='ENL auto')
+                    pp_enlval = gr.Number(10, label='ENL 값(auto 끄면)')
+                    pp_damp = gr.Number(2.0, label='frost damping')
+
+            with gr.Accordion('④ Clipping / Histogram', open=True):
+                with gr.Row():
+                    pp_cmin = gr.Number(0.2, label='min percentile')
+                    pp_cmax = gr.Number(99.8, label='max percentile')
+                    pp_ignore0 = gr.Checkbox(True, label='0값 제외')
+                with gr.Row():
+                    pp_histmode = gr.Dropdown(PP.HISTOGRAM_MODES, value='sar_only', label='histogram 모드')
+                    pp_bins = gr.Number(1024, label='bins', precision=0)
+                    pp_clahe = gr.Checkbox(False, label='CLAHE(있으면)')
+                with gr.Row():
+                    pp_size = gr.Number(256, label='image_size', precision=0)
+                    pp_ch = gr.Number(3, label='출력 채널', precision=0)
+
+            # shared inputs list (MUST match _pp_build_config signature order)
+            pp_inputs = [pp_in, pp_out, pp_optref, pp_max, pp_recursive, pp_shuffle,
+                         pp_e_val, pp_e_int, pp_e_spk, pp_e_clip, pp_e_hist,
+                         pp_e_resize, pp_e_chan,
+                         pp_intmode, pp_spk, pp_win, pp_enlauto, pp_enlval, pp_damp,
+                         pp_cmin, pp_cmax, pp_ignore0, pp_histmode, pp_bins, pp_clahe,
+                         pp_size, pp_ch]
+
+            with gr.Accordion('⑤ 미리보기 (Before / After)', open=True):
+                pp_prev_btn = gr.Button('🔍 첫 이미지 미리보기')
+                with gr.Row():
+                    pp_before = gr.Image(label='Before (원본 SAR)', type='numpy')
+                    pp_after = gr.Image(label='After (전처리)', type='numpy')
+                pp_prev_msg = gr.Textbox(label='', interactive=False)
+                pp_prev_btn.click(pp_preview, inputs=pp_inputs,
+                                  outputs=[pp_before, pp_after, pp_prev_msg])
+
+            with gr.Accordion('⑥ 실행 / Export', open=True):
+                pp_run_btn = gr.Button('▶ 전처리 실행', variant='primary')
+                pp_log = gr.Textbox(label='로그', lines=10, interactive=False, max_lines=10)
+                pp_gallery = gr.Gallery(label='Before|After 미리보기', columns=3, height='auto')
+                pp_run_btn.click(pp_run, inputs=pp_inputs, outputs=[pp_log, pp_gallery])
+
+                gr.Markdown('---\n**CUT 폴더 구조로 export** (전처리 결과 → trainA/testA, optical → trainB/testB)')
+                with gr.Row():
+                    pp_exp_opt = gr.Textbox('', label='Optical 폴더 (trainB/testB용, 선택)')
+                    pp_exp_ratio = gr.Number(0.1, label='test 비율')
+                    pp_exp_link = gr.Radio(['symlink', 'copy'], value='symlink', label='파일 처리')
+                pp_exp_btn = gr.Button('🗂️ CUT layout export')
+                pp_exp_msg = gr.Textbox(label='export 결과', lines=4, interactive=False)
+                pp_exp_btn.click(pp_export,
+                                 inputs=[pp_out, pp_exp_opt, pp_exp_ratio, pp_exp_link],
+                                 outputs=pp_exp_msg)
 
     return demo
 

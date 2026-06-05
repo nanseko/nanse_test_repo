@@ -1,2 +1,10 @@
 __pycache__/
 *.py[cod]
+
+# data / outputs / generated artifacts
+datasets/
+output/
+weights/
+gui_config.json
+preproc_config.json
+*.log

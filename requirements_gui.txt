@@ -10,3 +10,6 @@ numpy
 matplotlib
 pillow
 requests          # M4-SAR dataset download (Colab)
+# optional preprocessing extras:
+# bm3d        # BM3D speckle filter (else falls back to refined_lee)
+# opencv-python  # CLAHE in histogram mapping

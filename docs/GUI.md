@@ -135,11 +135,14 @@ drive.mount('/content/drive')
 전처리는 학습 **전** 단계라 데이터 폴더(탭 1) 바로 옆 **탭 2**에 배치되어 있습니다.
 (코드: `preprocessing/`, CLI: `scripts/preprocess_pipeline.py`)
 
-- **순서 직접 구성**: "추가할 스텝"을 골라 `➕ 추가`, `⬆/⬇` 이동, `🗑 삭제`, `↺ 기본 순서`로
-  파이프라인을 **원하는 순서**로 만듭니다. 같은 speckle을 **Lee → Frost** 처럼 여러 번 넣을 수 있고,
-  현재 표(#·스텝·파라미터)가 실행 순서입니다.
-- **Speckle 필터별 파라미터**: 필터를 고르면 해당 파라미터만 표시됩니다 —
-  `lee/refined_lee/gamma_map`=window+ENL, `frost`=+damping, `bm3d`=sigma.
+- **순서 직접 구성**:
+  1. **추가할 전처리(상위 메뉴)** = speckle / intensity / clipping / histogram / resize /
+     channel / validate / normalize 를 고르고 `➕ 추가` → 맨 아래 #으로 생성.
+  2. 표에서 **행(#)을 클릭**하면 선택되고 **편집 패널**이 열려 파라미터를 설정합니다.
+  3. 선택한 #을 `⬆/⬇` 로 이동, `🗑` 로 삭제(선택된 행만), `↺` 로 기본 순서.
+  - 같은 speckle을 **Lee → Frost** 처럼 여러 번 넣을 수 있고, 표(위→아래)가 실행 순서입니다.
+- **Speckle 필터별 파라미터**: 편집 패널에서 필터 종류 변경 가능(기본 Lee). 필터에 맞는
+  파라미터만 표시 — `lee/refined_lee/gamma_map`=window+ENL, `frost`=+damping, `bm3d`=sigma.
   순수 NumPy 구현(`bm3d` 없으면 refined_lee로 자동 대체).
 - **Clipping/Histogram**: percentile clipping, `sar_only / unpaired_optical_reference / preset`
   histogram 매핑, CLAHE(opencv 있으면).

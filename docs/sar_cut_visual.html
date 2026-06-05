@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SAR 예시로 보는 CUT — Attention 유무 & Discriminator</title>
+<style>
+  :root{--bg:#0f1420;--panel:#161d2e;--panel2:#1d2740;--ink:#e8edf7;--muted:#9fb0cc;--line:#2c3a5a;
+    --accent:#4f8cff;--green:#22c55e;--warn:#f59e0b;--pink:#ec4899;--orange:#f97316;--violet:#8b5cf6;--teal:#14b8a6;}
+  *{box-sizing:border-box;}
+  body{margin:0;background:linear-gradient(180deg,#0c111c,#0f1420 40%);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Noto Sans KR","Malgun Gothic",sans-serif;line-height:1.7;}
+  header{padding:50px 24px 36px;text-align:center;border-bottom:1px solid var(--line);
+    background:radial-gradient(1200px 420px at 50% -40%, rgba(79,140,255,.2), rgba(20,184,166,.12), transparent);}
+  header h1{font-size:1.9rem;margin:0 0 10px;}
+  header p{color:var(--muted);margin:6px auto;max-width:820px;}
+  .badge{display:inline-block;background:var(--teal);color:#04201c;font-weight:700;padding:3px 12px;border-radius:999px;font-size:.78rem;margin-bottom:12px;}
+  .wrap{max-width:1060px;margin:0 auto;padding:0 24px 90px;}
+  nav{position:sticky;top:0;z-index:30;background:rgba(12,17,28,.93);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:9px 16px;display:flex;gap:6px;flex-wrap:wrap;justify-content:center;}
+  nav a{color:var(--muted);text-decoration:none;font-size:.83rem;padding:5px 10px;border-radius:8px;}
+  nav a:hover{color:#fff;background:var(--panel2);}
+  section{margin-top:52px;}
+  h2{font-size:1.45rem;border-left:4px solid var(--teal);padding-left:14px;margin:0 0 6px;}
+  h2 .num{color:var(--teal);font-weight:800;margin-right:8px;}
+  h3{font-size:1.12rem;margin:18px 0 8px;color:#bdeee6;}
+  .lead{color:var(--muted);margin:0 0 14px;}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin:14px 0;}
+  code{background:#0d1426;border:1px solid var(--line);padding:1px 6px;border-radius:5px;font-size:.86em;color:#a7c4ff;}
+  .btn{cursor:pointer;border:none;border-radius:9px;padding:9px 16px;font-weight:700;font-size:.9rem;background:var(--accent);color:#06122c;}
+  .btn.teal{background:var(--teal);color:#04201c;}
+  canvas{border:1px solid var(--line);border-radius:8px;image-rendering:auto;width:148px;height:148px;background:#0a0f1c;}
+  .stage{display:flex;flex-direction:column;align-items:center;gap:5px;}
+  .stage .cap{font-size:.74rem;color:var(--muted);text-align:center;}
+  .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start;justify-content:center;}
+  .rowlbl{display:flex;align-items:center;gap:10px;margin:6px 0;}
+  .tag{font-size:.78rem;font-weight:700;padding:3px 10px;border-radius:7px;}
+  .tag.no{background:rgba(236,72,153,.16);color:#f9a8d4;border:1px solid #9d2667;}
+  .tag.yes{background:rgba(249,115,22,.18);color:#fdba74;border:1px solid #b45309;}
+  .arrow{align-self:center;color:#4a5a7e;font-size:1.3rem;}
+  .note{border-left:4px solid var(--warn);background:rgba(245,158,11,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:12px 0;}
+  .key{border-left:4px solid var(--green);background:rgba(34,197,94,.08);padding:12px 16px;border-radius:0 10px 10px 0;margin:12px 0;}
+  table{width:100%;border-collapse:collapse;margin:10px 0;font-size:.9rem;}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;}
+  th{background:var(--panel2);}
+  .legend span{margin-right:14px;font-size:.82rem;}
+  .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:middle;}
+  /* architecture diagram */
+  .archbox{border:1.5px solid;border-radius:10px;padding:10px 12px;text-align:center;font-size:.82rem;background:var(--panel2);}
+  .gbox{border-color:#3b82f6;} .dbox{border-color:var(--orange);} .iobox{border-color:#64748b;}
+  .verdict{font-weight:800;font-size:.95rem;margin-top:4px;}
+</style>
+</head>
+<body>
+<header>
+  <div class="badge">SAR 예시 · CUT 시각화</div>
+  <h1>SAR 이미지로 보는 CUT — Attention 유무 & Discriminator 판별</h1>
+  <p>합성 <b>SAR 영상</b>을 직접 만들어, Attention이 <b>있을 때 / 없을 때</b> Encoder→ResNet→Decoder를
+     지나며 어떻게 달라지는지, 그리고 Discriminator가 결과를 어떻게 판별하는지 보여줍니다.
+     모든 그림은 실제 speckle·denoise·colorize 연산으로 생성됩니다.</p>
+</header>
+
+<nav>
+  <a href="#input">1. SAR 입력</a>
+  <a href="#layers">2. 레이어 통과(유무 비교) ▶</a>
+  <a href="#out">3. 출력 비교</a>
+  <a href="#disc">4. Discriminator ▶</a>
+  <a href="#arch">5. 구조 정리</a>
+</nav>
+
+<div class="wrap">
+
+<!-- 1 -->
+<section id="input">
+  <h2><span class="num">1</span>먼저: SAR 입력 영상 (speckle 잡음)</h2>
+  <p class="lead">SAR는 알갱이 같은 <b>speckle 잡음</b>이 강합니다. 아래는 해안선·도로·농경지를 가진 가상 SAR 장면입니다.</p>
+  <div class="card">
+    <div class="row">
+      <div class="stage"><canvas id="c-struct"></canvas><div class="cap">실제 지형 구조<br>(speckle 전)</div></div>
+      <div class="arrow">×잡음→</div>
+      <div class="stage"><canvas id="c-sar"></canvas><div class="cap"><b>SAR 입력</b> (real_A)<br>speckle 섞임</div></div>
+      <div class="arrow">＝?</div>
+      <div class="stage"><canvas id="c-att"></canvas><div class="cap">Attention이 주목하는 곳<br>(구조 경계=밝음)</div></div>
+    </div>
+    <div style="text-align:center;margin-top:12px;"><button class="btn teal" id="regen">🎲 새 SAR 장면 생성</button></div>
+    <div class="note">Attention 가중치 그림(오른쪽)을 보면 <b>도로·해안선·밭 경계 같은 구조</b>에 밝게 집중하고, 평평한 잡음 영역은 어둡습니다.
+      "중요한 곳에 집중, 잡음은 무시"가 Attention의 역할입니다.</div>
+  </div>
+</section>
+
+<!-- 2 -->
+<section id="layers">
+  <h2><span class="num">2</span>CUT 레이어 통과 — Attention 없음 vs 있음</h2>
+  <p class="lead">같은 SAR 입력이 Encoder → ResNet → Decoder를 지나는 과정을 두 줄로 비교합니다.
+     SAR→Optical 변환이므로 최종 출력은 <b>fake "Optical"</b>입니다(가짜 SAR이 아님).</p>
+  <div class="card">
+    <div class="rowlbl"><span class="tag no">Attention 없음</span><span style="color:var(--muted);font-size:.85rem">speckle이 그대로 따라가 색·질감 잡음으로 번역됨</span></div>
+    <div class="row">
+      <div class="stage"><canvas id="n-enc"></canvas><div class="cap">Encoder 특징</div></div>
+      <div class="arrow">▸</div>
+      <div class="stage"><canvas id="n-res"></canvas><div class="cap">ResNet 특징</div></div>
+      <div class="arrow">▸</div>
+      <div class="stage"><canvas id="n-out"></canvas><div class="cap">Decoder → fake Optical</div></div>
+    </div>
+    <div class="rowlbl" style="margin-top:18px;"><span class="tag yes">Attention 있음</span><span style="color:var(--muted);font-size:.85rem">잡음 억제·구조 강조 → 깨끗하고 구조 보존된 변환</span></div>
+    <div class="row">
+      <div class="stage"><canvas id="y-enc"></canvas><div class="cap">Encoder 특징 (정제)</div></div>
+      <div class="arrow">▸</div>
+      <div class="stage"><canvas id="y-res"></canvas><div class="cap">ResNet 특징 (정제)</div></div>
+      <div class="arrow">▸</div>
+      <div class="stage"><canvas id="y-out"></canvas><div class="cap">Decoder → fake Optical</div></div>
+    </div>
+    <div class="key" style="margin-top:14px;">왼→오른쪽으로 갈수록 차이가 누적됩니다. Attention 없음은 speckle이 <b>가짜 색 얼룩(texture hallucination)</b>으로 번지고,
+      Attention 있음은 도로·해안선 <b>구조가 또렷이 보존</b>된 채 색이 입혀집니다.</div>
+  </div>
+</section>
+
+<!-- 3 -->
+<section id="out">
+  <h2><span class="num">3</span>최종 출력 나란히 비교</h2>
+  <div class="card">
+    <div class="row">
+      <div class="stage"><canvas id="cmp-sar"></canvas><div class="cap">입력 SAR</div></div>
+      <div class="arrow">→</div>
+      <div class="stage"><canvas id="cmp-no"></canvas><div class="cap"><span class="tag no">없음</span> fake Optical<br>(잡음 얼룩)</div></div>
+      <div class="stage"><canvas id="cmp-yes"></canvas><div class="cap"><span class="tag yes">있음</span> fake Optical<br>(깨끗·구조 보존)</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 -->
+<section id="disc">
+  <h2><span class="num">4</span>Discriminator는 어떻게 판별하나?</h2>
+  <p class="lead">질문: "fake와 Real Optical을 Discriminator가 어떻게? Encoder/ResNet/Decoder를 다시 거쳐?"<br>
+     답: <b>아니요.</b> Discriminator(D)는 <b>완전히 별개의 신경망</b>입니다. G의 인코더/레스넷/디코더를 재사용하지 않습니다.</p>
+  <div class="card">
+    <p>D는 <b>이미지 한 장</b>(가짜 optical 또는 진짜 optical)을 받아, 자체 Conv 층으로 <b>패치별 진짜/가짜 점수(PatchGAN)</b>를 출력합니다.
+       SAR(real_A)은 보지 않고, <b>target(optical) 도메인</b>만 판별합니다.</p>
+    <div style="text-align:center;margin:10px 0;"><button class="btn" id="disc-run">▶ Discriminator 판별 실행 (패치 스캔)</button></div>
+    <div class="row" style="gap:22px;">
+      <div class="stage"><canvas id="d-real"></canvas><div class="cap">진짜 Optical (real_B)</div><div class="verdict" id="v-real">·</div></div>
+      <div class="stage"><canvas id="d-no"></canvas><div class="cap"><span class="tag no">없음</span> fake Optical</div><div class="verdict" id="v-no">·</div></div>
+      <div class="stage"><canvas id="d-yes"></canvas><div class="cap"><span class="tag yes">있음</span> fake Optical</div><div class="verdict" id="v-yes">·</div></div>
+    </div>
+    <div class="legend" style="text-align:center;margin-top:8px;">
+      <span><span class="dot" style="background:#22c55e"></span>패치 = 진짜 같다</span>
+      <span><span class="dot" style="background:#ef4444"></span>패치 = 가짜로 의심</span>
+    </div>
+    <div class="note">잡음 얼룩이 많은 <b>Attention 없음</b> 결과는 빨간(가짜) 패치가 많아 D에게 쉽게 들킵니다.
+      <b>Attention 있음</b> 결과는 진짜 optical처럼 매끈해 초록 패치가 많습니다. D는 이 점수로 G를 압박하고, G는 더 진짜같이 만들도록 학습합니다.</div>
+  </div>
+</section>
+
+<!-- 5 -->
+<section id="arch">
+  <h2><span class="num">5</span>구조 정리 — G와 D는 서로 다른 망</h2>
+  <div class="card">
+    <div class="row" style="align-items:center;gap:10px;">
+      <div class="archbox iobox">입력 SAR<br><small>real_A</small></div>
+      <div class="arrow">→</div>
+      <div class="archbox gbox"><b>G (Generator)</b><br>Encoder → ResNet → Decoder<br><small>여기서 fake 생성</small></div>
+      <div class="arrow">→</div>
+      <div class="archbox iobox">fake Optical<br><small>fake_B</small></div>
+    </div>
+    <div style="text-align:center;color:var(--muted);margin:6px 0;">fake_B 와 real_B(진짜 optical) 두 장이 ↓</div>
+    <div class="row" style="align-items:center;gap:10px;">
+      <div class="archbox iobox">fake_B</div>
+      <div class="archbox iobox">real_B</div>
+      <div class="arrow">→</div>
+      <div class="archbox dbox"><b>D (Discriminator)</b><br>별도 Conv 망 (PatchGAN)<br><small>G를 재사용하지 않음</small></div>
+      <div class="arrow">→</div>
+      <div class="archbox iobox">패치별<br>진짜/가짜 점수</div>
+    </div>
+    <table style="margin-top:14px;">
+      <tr><th>질문</th><th>답</th></tr>
+      <tr><td>D가 Encoder/ResNet/Decoder를 다시 진행?</td><td><b>아니요.</b> D는 자체 Conv 층을 가진 별도 망입니다.</td></tr>
+      <tr><td>D 입력은?</td><td>이미지 한 장(fake_B 또는 real_B). 한 번에 하나씩 채점. SAR은 안 봄.</td></tr>
+      <tr><td>둘(fake+real)을 동시에 비교?</td><td>각각 따로 통과시켜 점수를 내고, 손실에서 "real→1, fake→0"로 비교.</td></tr>
+      <tr><td>G의 일부를 공유하는 건 없나?</td><td>D는 공유 안 함. (단, PatchNCE용 netE만 G와 가중치 공유 — D와는 무관.)</td></tr>
+    </table>
+    <div class="key">정리: <b>G</b>(인코더-레스넷-디코더)는 가짜를 <b>만들고</b>, <b>D</b>(별도 망)는 만든 가짜와 진짜를 <b>채점</b>합니다.
+      출력은 가짜 <b>Optical</b>입니다(가짜 SAR 아님). 둘은 서로 다른 망이며 적대적으로 함께 학습됩니다.</div>
+  </div>
+</section>
+
+</div>
+<footer style="border-top:1px solid var(--line);padding:22px;text-align:center;color:var(--muted);font-size:.85rem;">
+  SAR 예시 CUT 시각화 · 근거: <code>modules/cut_model.py</code> (Generator, Discriminator), <code>modules/losses.py</code>
+</footer>
+
+<script>
+const W=120,H=120;
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function clampi(v,a,b){return v<a?a:v>b?b:v;}
+
+function buildStructure(seed){
+  const r=mulberry32(seed); const ph=[]; for(let i=0;i<6;i++)ph.push(r()*6.283);
+  const coastA=0.55+0.06*Math.sin(seed*1.3);
+  const roadB=0.2+0.5*r(), roadS=0.35+0.3*r();
+  const inten=new Float32Array(W*H), cls=new Uint8Array(W*H);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    const u=x/W,v=y/H,i=y*W+x;
+    let f=0.5+0.17*Math.sin(6*u+ph[0])+0.14*Math.sin(5*v+ph[1])+0.11*Math.sin(8*u+7*v+ph[2]);
+    const coast=v-(coastA+0.07*Math.sin(8*u+ph[3]));
+    let c=0,val;
+    if(coast>0){c=1;val=0.16+0.05*Math.sin(22*u+ph[4]);}      // water (dark)
+    else{c=0;val=Math.min(1,Math.max(0.18,f));}               // land/fields
+    const road=Math.abs(v-(roadB+roadS*u+0.03*Math.sin(10*u)));
+    if(road<0.013){c=2;val=0.88;}                              // road (bright)
+    inten[i]=val; cls[i]=c;
+  }
+  return {inten,cls};
+}
+function speckle(inten,seed,strength){
+  const r=mulberry32(seed*7+3),out=new Float32Array(W*H);
+  for(let i=0;i<W*H;i++){const n=-Math.log(Math.max(1e-4,r()));      // gamma(1) single-look
+    out[i]=Math.min(1,Math.max(0,inten[i]*(1-strength+strength*n)));}
+  return out;
+}
+function blur(a,r){
+  const tmp=new Float32Array(W*H),out=new Float32Array(W*H);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){let s=0,c=0;for(let k=-r;k<=r;k++){const xx=x+k;if(xx>=0&&xx<W){s+=a[y*W+xx];c++;}}tmp[y*W+x]=s/c;}
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){let s=0,c=0;for(let k=-r;k<=r;k++){const yy=y+k;if(yy>=0&&yy<H){s+=tmp[yy*W+x];c++;}}out[y*W+x]=s/c;}
+  return out;
+}
+function attWeight(inten){
+  const w=new Float32Array(W*H);
+  for(let y=1;y<H-1;y++)for(let x=1;x<W-1;x++){const i=y*W+x;
+    const gx=inten[i+1]-inten[i-1],gy=inten[i+W]-inten[i-W];
+    w[i]=Math.min(1,Math.sqrt(gx*gx+gy*gy)*4.5);}
+  return blur(w,1);
+}
+function denoise(noisy,weight){
+  const bl=blur(noisy,2),out=new Float32Array(W*H);
+  for(let i=0;i<W*H;i++){const w=weight[i];out[i]=w*noisy[i]+(1-w)*bl[i];}
+  return out;
+}
+function gray(inten){const im=new Uint8ClampedArray(W*H*4);
+  for(let i=0;i<W*H;i++){const v=Math.round(clampi(inten[i],0,1)*255),j=i*4;im[j]=im[j+1]=im[j+2]=v;im[j+3]=255;}return im;}
+function highpass(a){const bl=blur(a,2),o=new Float32Array(W*H);for(let i=0;i<W*H;i++)o[i]=clampi((a[i]-bl[i])*1.8+0.5,0,1);return o;}
+function contrast(a){const o=new Float32Array(W*H);for(let i=0;i<W*H;i++)o[i]=clampi((a[i]-0.5)*1.4+0.5,0,1);return o;}
+function heat(w){const im=new Uint8ClampedArray(W*H*4);
+  for(let i=0;i<W*H;i++){const v=clampi(w[i],0,1),j=i*4;im[j]=Math.round(40+215*v);im[j+1]=Math.round(30+150*v);im[j+2]=Math.round(60+30*v);im[j+3]=255;}return im;}
+function colorize(inten,cls,noise){
+  const im=new Uint8ClampedArray(W*H*4);
+  for(let i=0;i<W*H;i++){let v=clampi(inten[i],0,1),R,G,B;
+    if(cls[i]===1){R=20+40*v;G=60+80*v;B=130+110*v;}        // water blue
+    else if(cls[i]===2){R=G=B=150+80*v;}                     // road gray
+    else{R=70+120*v;G=95+120*v;B=45+55*v;}                   // land green
+    if(noise){const n=(noise[i]-0.5)*120;R+=n;G+=n*0.65;B+=n*0.35;}
+    const j=i*4;im[j]=clampi(R,0,255);im[j+1]=clampi(G,0,255);im[j+2]=clampi(B,0,255);im[j+3]=255;}
+  return im;
+}
+function paint(id,data){const cv=document.getElementById(id);cv.width=W;cv.height=H;
+  cv.getContext('2d').putImageData(new ImageData(data,W,H),0,0);}
+
+let STATE={};
+function rebuild(seed){
+  const A=buildStructure(seed);                 // SAR scene
+  const noisy=speckle(A.inten,seed,0.8);
+  const weight=attWeight(A.inten);
+  const den=denoise(noisy,weight);
+  const B=buildStructure(seed+137);             // unpaired REAL optical scene
+  STATE={A,noisy,weight,den,B,seed};
+  // section 1
+  paint('c-struct',gray(A.inten));
+  paint('c-sar',gray(noisy));
+  paint('c-att',heat(weight));
+  // section 2 — no attention row (speckle propagates)
+  paint('n-enc',gray(highpass(noisy)));
+  paint('n-res',gray(contrast(noisy)));
+  paint('n-out',colorize(noisy,A.cls,noisy));
+  // with attention row (denoised, structure kept)
+  paint('y-enc',gray(highpass(den)));
+  paint('y-res',gray(contrast(den)));
+  paint('y-out',colorize(den,A.cls,null));
+  // section 3
+  paint('cmp-sar',gray(noisy));
+  paint('cmp-no',colorize(noisy,A.cls,noisy));
+  paint('cmp-yes',colorize(den,A.cls,null));
+  // section 4 panels
+  STATE.realImg=colorize(B.inten,B.cls,null);
+  STATE.noImg=colorize(noisy,A.cls,noisy);
+  STATE.yesImg=colorize(den,A.cls,null);
+  paint('d-real',STATE.realImg);paint('d-no',STATE.noImg);paint('d-yes',STATE.yesImg);
+  document.getElementById('v-real').textContent='·';
+  document.getElementById('v-no').textContent='·';
+  document.getElementById('v-yes').textContent='·';
+}
+document.getElementById('regen').onclick=()=>rebuild((Math.random()*1000)|0);
+
+/* ---------- Discriminator patch scan ---------- */
+function patchScores(img,n){
+  const pw=(W/n)|0,ph=(H/n)|0,sc=[];
+  for(let py=0;py<n;py++){sc.push([]);for(let px=0;px<n;px++){
+    let m=0,m2=0,cnt=0;
+    for(let y=py*ph;y<(py+1)*ph;y++)for(let x=px*pw;x<(px+1)*pw;x++){
+      const j=(y*W+x)*4,L=(img[j]*0.3+img[j+1]*0.59+img[j+2]*0.11)/255;m+=L;m2+=L*L;cnt++;}
+    m/=cnt;const varr=Math.max(0,m2/cnt-m*m);
+    sc[py].push(clampi(1-varr*16,0,1));      // high local variance -> looks fake
+  }}
+  return sc;
+}
+function discScan(id,vid,img){
+  const cv=document.getElementById(id);cv.width=W;cv.height=H;const ctx=cv.getContext('2d');
+  const n=6,pw=(W/n)|0,ph=(H/n)|0,sc=patchScores(img,n);
+  let k=0;const total=n*n;
+  function step(){
+    ctx.putImageData(new ImageData(img,W,H),0,0);
+    let cnt=0,sum=0;
+    for(let idx=0;idx<=k&&idx<total;idx++){
+      const py=(idx/n)|0,px=idx%n,s=sc[py][px];sum+=s;cnt++;
+      const g=s>0.5;ctx.fillStyle=g?'rgba(34,197,94,.45)':'rgba(239,68,68,.5)';
+      ctx.fillRect(px*pw,py*ph,pw-1,ph-1);
+    }
+    // sweeping highlight
+    if(k<total){const py=(k/n)|0,px=k%n;ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.strokeRect(px*pw,py*ph,pw-1,ph-1);}
+    k++;
+    if(k<=total){requestAnimationFrame(step);}
+    else{
+      let avg=0;for(let y=0;y<n;y++)for(let x=0;x<n;x++)avg+=sc[y][x];avg/=total;
+      const el=document.getElementById(vid);
+      el.textContent=avg>0.5?`진짜로 판단 ✅ (${(avg*100|0)}%)`:`가짜 감지 ⚠ (진짜 ${(avg*100|0)}%)`;
+      el.style.color=avg>0.5?'#22c55e':'#ef4444';
+    }
+  }
+  step();
+}
+document.getElementById('disc-run').onclick=()=>{
+  discScan('d-real','v-real',STATE.realImg);
+  discScan('d-no','v-no',STATE.noImg);
+  discScan('d-yes','v-yes',STATE.yesImg);
+};
+
+rebuild(42);
+</script>
+</body>
+</html>

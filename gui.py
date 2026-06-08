@@ -273,6 +273,16 @@ def training_worker(cfg, state):
 
         keras_ver = str(getattr(tf.keras, '__version__', '?'))
         state.log(f'TensorFlow {tf.__version__}, Keras {keras_ver}')
+        try:
+            gpus = tf.config.list_physical_devices('GPU')
+            if gpus:
+                state.log(f'GPU 사용: {len(gpus)}개 감지됨 ({", ".join(g.name for g in gpus)})')
+            else:
+                state.log('⚠ GPU 미감지 — CPU로 학습합니다(느림). '
+                          'tensorflow-cpu가 깔렸거나, 드라이버/CUDA가 GPU와 안 맞을 수 있습니다. '
+                          'RTX 50xx(Blackwell)는 CUDA 12.8+와 최신 TF 빌드가 필요합니다.')
+        except Exception:
+            pass
         if keras_ver.startswith('3'):
             state.log('오류: Keras 3가 감지되었습니다. 이 코드는 Keras 2가 필요합니다. '
                       'Colab에서 `pip install tf-keras` 실행 후 런타임을 재시작하고 '

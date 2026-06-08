@@ -273,6 +273,16 @@ def training_worker(cfg, state):
 
         keras_ver = str(getattr(tf.keras, '__version__', '?'))
         state.log(f'TensorFlow {tf.__version__}, Keras {keras_ver}')
+        try:
+            gpus = tf.config.list_physical_devices('GPU')
+            if gpus:
+                state.log(f'GPU 사용: {len(gpus)}개 감지됨 ({", ".join(g.name for g in gpus)})')
+            else:
+                state.log('⚠ GPU 미감지 — CPU로 학습합니다(느림). '
+                          'tensorflow-cpu가 깔렸거나, 드라이버/CUDA가 GPU와 안 맞을 수 있습니다. '
+                          'RTX 50xx(Blackwell)는 CUDA 12.8+와 최신 TF 빌드가 필요합니다.')
+        except Exception:
+            pass
         if keras_ver.startswith('3'):
             state.log('오류: Keras 3가 감지되었습니다. 이 코드는 Keras 2가 필요합니다. '
                       'Colab에서 `pip install tf-keras` 실행 후 런타임을 재시작하고 '
@@ -1019,7 +1029,7 @@ def pp_on_select(steps, evt: gr.SelectData):
     except Exception:
         row = 0
     if not steps or row >= len(steps):
-        return [gr.update()] * 21
+        return [gr.update()] * 26
     s = steps[row]
     name = s['name']
     p = s.get('params', {})
@@ -1045,40 +1055,48 @@ def pp_on_select(steps, evt: gr.SelectData):
     ch = int(p.get('output_channels', 3))
 
     is_spk = (name == 'speckle_filter')
-    spk_win = is_spk and method in ('lee', 'frost', 'refined_lee', 'gamma_map')
-    spk_damp = is_spk and method == 'frost'
-    spk_bm = is_spk and method == 'bm3d'
     is_int = (name == 'sar_intensity_transform')
     is_clip = (name == 'outlier_clipping')
     is_hist = (name == 'histogram_mapping')
     is_resize = (name == 'resize_or_tile')
     is_chan = (name == 'channel_adapter')
+    # speckle sub-widget visibility (only meaningful when the speckle group shows)
+    win_v = method in ('lee', 'frost', 'refined_lee', 'gamma_map')
+    damp_v = (method == 'frost')
+    bm_v = (method == 'bm3d')
 
     title = f'편집 중: #{row + 1}  ·  {s.get("label", name)}'
     if name in ('validate_image', 'normalize_for_cut'):
         title += '  (이 스텝은 조절할 파라미터가 없습니다)'
 
+    # Outputs: pp_sel, panel, title, [6 category groups], [17 edit widgets]
     return [
         row,                                   # pp_sel
         gr.update(visible=True),               # edit_panel
         title,                                  # edit_title
-        gr.update(value=method, visible=is_spk),
-        gr.update(value=window, visible=spk_win),
-        gr.update(value=enl_auto, visible=spk_win),
-        gr.update(value=enl_val, visible=spk_win),
-        gr.update(value=damp, visible=spk_damp),
-        gr.update(value=sig_auto, visible=spk_bm),
-        gr.update(value=sig_val, visible=spk_bm),
-        gr.update(value=intmode, visible=is_int),
-        gr.update(value=cmin, visible=is_clip),
-        gr.update(value=cmax, visible=is_clip),
-        gr.update(value=ign, visible=is_clip),
-        gr.update(value=histmode, visible=is_hist),
-        gr.update(value=bins, visible=is_hist),
-        gr.update(value=optref, visible=is_hist),
-        gr.update(value=clahe, visible=is_hist),
-        gr.update(value=size, visible=is_resize),
-        gr.update(value=ch, visible=is_chan),
+        gr.update(visible=is_spk),             # g_spk
+        gr.update(visible=is_int),             # g_int
+        gr.update(visible=is_clip),            # g_clip
+        gr.update(visible=is_hist),            # g_hist
+        gr.update(visible=is_resize),          # g_resize
+        gr.update(visible=is_chan),            # g_chan
+        gr.update(value=method),               # e_method
+        gr.update(value=window, visible=win_v),
+        gr.update(value=enl_auto, visible=win_v),
+        gr.update(value=enl_val, visible=win_v),
+        gr.update(value=damp, visible=damp_v),
+        gr.update(value=sig_auto, visible=bm_v),
+        gr.update(value=sig_val, visible=bm_v),
+        gr.update(value=intmode),              # e_intmode
+        gr.update(value=cmin),                 # e_cmin
+        gr.update(value=cmax),                 # e_cmax
+        gr.update(value=ign),                  # e_ign
+        gr.update(value=histmode),             # e_histmode
+        gr.update(value=bins),                 # e_bins
+        gr.update(value=optref),               # e_optref
+        gr.update(value=clahe),                # e_clahe
+        gr.update(value=size),                 # e_size
+        gr.update(value=ch),                   # e_ch
     ]
 
 
@@ -1126,9 +1144,40 @@ def _pp_config_from_steps(input_dir, output_dir, max_items, recursive, shuffle, 
     }
 
 
+# --- preprocessing settings persistence (folders + options + pipeline) ----- #
+PP_CONFIG_PATH = './preproc_config.json'
+
+
+def pp_load_settings():
+    if os.path.exists(PP_CONFIG_PATH):
+        try:
+            with open(PP_CONFIG_PATH) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def pp_save_settings(steps, input_dir, output_dir, max_items, recursive, shuffle):
+    data = {'input_dir': input_dir, 'output_dir': output_dir,
+            'max_items': int(max_items or 0), 'recursive': bool(recursive),
+            'shuffle': bool(shuffle), 'steps': steps}
+    try:
+        with open(PP_CONFIG_PATH, 'w') as f:
+            json.dump(data, f, indent=2, default=str)
+    except Exception:
+        pass
+
+
+def pp_save_btn_fn(steps, input_dir, output_dir, max_items, recursive, shuffle):
+    pp_save_settings(steps, input_dir, output_dir, max_items, recursive, shuffle)
+    return f'✅ 전처리 설정 저장됨: {PP_CONFIG_PATH} ({datetime.datetime.now().strftime("%H:%M:%S")})'
+
+
 def pp_preview(steps, input_dir, output_dir, max_items, recursive, shuffle):
     import os
     import preprocessing as PP
+    pp_save_settings(steps, input_dir, output_dir, max_items, recursive, shuffle)
     if not steps:
         return None, None, '파이프라인에 스텝이 없습니다. 스텝을 추가하세요.'
     cfg = _pp_config_from_steps(input_dir, output_dir, max_items, recursive, shuffle, steps)
@@ -1144,6 +1193,7 @@ def pp_preview(steps, input_dir, output_dir, max_items, recursive, shuffle):
 
 def pp_run(steps, input_dir, output_dir, max_items, recursive, shuffle):
     import preprocessing as PP
+    pp_save_settings(steps, input_dir, output_dir, max_items, recursive, shuffle)
     if not steps:
         yield '파이프라인에 스텝이 없습니다.', []
         return
@@ -1258,25 +1308,31 @@ def build_ui():
                 '같은 speckle 필터를 Lee·Frost로 여러 번 넣을 수도 있습니다. '
                 '설계: `docs/README_pipeline.md`')
 
+            _pps = pp_load_settings()
+            _pp_steps0 = _pps.get('steps') or pp_default_steps()
+
             with gr.Accordion('① 폴더 / 데이터', open=True):
-                pp_in = gr.Textbox('./datasets/M4-SAR/raw_sar', label='입력 SAR 폴더')
-                pp_out = gr.Textbox('./datasets/M4-SAR-preprocessed', label='출력 폴더')
+                pp_in = gr.Textbox(_pps.get('input_dir', './datasets/M4-SAR/raw_sar'), label='입력 SAR 폴더')
+                pp_out = gr.Textbox(_pps.get('output_dir', './datasets/M4-SAR-preprocessed'), label='출력 폴더')
                 with gr.Row():
-                    pp_max = gr.Number(20, label='처리 개수 (0=전체)', precision=0)
-                    pp_recursive = gr.Checkbox(True, label='하위 폴더 포함')
-                    pp_shuffle = gr.Checkbox(False, label='섞기(shuffle)')
+                    pp_max = gr.Number(_pps.get('max_items', 20), label='처리 개수 (0=전체)', precision=0)
+                    pp_recursive = gr.Checkbox(_pps.get('recursive', True), label='하위 폴더 포함')
+                    pp_shuffle = gr.Checkbox(_pps.get('shuffle', False), label='섞기(shuffle)')
+                with gr.Row():
+                    pp_save_btn = gr.Button('💾 전처리 설정 저장 (폴더/순서 보존)')
+                    pp_save_msg = gr.Textbox(label='', interactive=False)
 
             with gr.Accordion('② 전처리 순서 만들기', open=True):
                 gr.Markdown(
                     '1) **추가할 전처리** 종류를 고르고 `➕ 추가` → 맨 아래 #으로 생성됩니다.\n'
                     '2) 표에서 **행(#)을 클릭**하면 선택되고, 아래 **편집 패널**이 열립니다 '
-                    '(speckle은 기본 Lee, 필터 변경 가능).\n'
+                    '(선택한 스텝만 표시 · speckle은 기본 Lee, 필터 변경 가능).\n'
                     '3) 선택한 #을 `⬆/⬇` 로 위/아래 이동, `🗑` 로 삭제합니다.')
-                pp_steps = gr.State(pp_default_steps())
+                pp_steps = gr.State(_pp_steps0)
                 pp_sel = gr.State(0)
                 pp_table = gr.Dataframe(
                     headers=['#', '스텝', '파라미터'], datatype=['number', 'str', 'str'],
-                    value=_pp_rows(pp_default_steps()), interactive=False, wrap=True,
+                    value=_pp_rows(_pp_steps0), interactive=False, wrap=True,
                     label='현재 파이프라인 (위→아래 순서로 실행 · 행을 클릭해 선택/편집)')
                 with gr.Row():
                     pp_addcat = gr.Dropdown(
@@ -1290,39 +1346,43 @@ def build_ui():
                     pp_rm_btn = gr.Button('🗑 선택 삭제')
                     pp_reset_btn = gr.Button('↺ 기본 순서로')
 
-            # ----- Edit panel (opens when a row is selected) ------------- #
+            # ----- Edit panel: only the selected step's params show ------ #
             with gr.Group(visible=False) as pp_edit_panel:
                 pp_edit_title = gr.Markdown('편집')
-                e_method = gr.Dropdown(PP.SPECKLE_METHODS, value='lee',
-                                       label='speckle 필터 종류', visible=False)
-                with gr.Row():
-                    e_window = gr.Number(7, label='window_size', precision=0, visible=False)
-                    e_enlauto = gr.Checkbox(True, label='ENL auto', visible=False)
-                    e_enlval = gr.Number(10, label='ENL 값', visible=False)
-                with gr.Row():
-                    e_damp = gr.Number(2.0, label='Frost damping_factor', visible=False)
-                    e_sigauto = gr.Checkbox(True, label='BM3D sigma auto', visible=False)
-                    e_sigval = gr.Number(0.1, label='BM3D sigma 값', visible=False)
-                e_intmode = gr.Dropdown(PP.INTENSITY_MODES, value='log1p',
-                                        label='intensity mode', visible=False)
-                with gr.Row():
-                    e_cmin = gr.Number(0.2, label='clip min %', visible=False)
-                    e_cmax = gr.Number(99.8, label='clip max %', visible=False)
-                    e_ign = gr.Checkbox(True, label='0값 제외', visible=False)
-                with gr.Row():
-                    e_histmode = gr.Dropdown(PP.HISTOGRAM_MODES, value='sar_only',
-                                             label='histogram 모드', visible=False)
-                    e_bins = gr.Number(1024, label='bins', precision=0, visible=False)
-                    e_clahe = gr.Checkbox(False, label='CLAHE', visible=False)
-                e_optref = gr.Textbox('', label='Optical 참조 폴더 (unpaired 모드)', visible=False)
-                e_size = gr.Number(256, label='resize image_size', precision=0, visible=False)
-                e_ch = gr.Number(3, label='출력 채널', precision=0, visible=False)
+                with gr.Group(visible=False) as g_spk:
+                    e_method = gr.Dropdown(PP.SPECKLE_METHODS, value='lee', label='speckle 필터 종류')
+                    with gr.Row():
+                        e_window = gr.Number(7, label='window_size', precision=0)
+                        e_enlauto = gr.Checkbox(True, label='ENL auto')
+                        e_enlval = gr.Number(10, label='ENL 값')
+                    with gr.Row():
+                        e_damp = gr.Number(2.0, label='Frost damping_factor', visible=False)
+                        e_sigauto = gr.Checkbox(True, label='BM3D sigma auto', visible=False)
+                        e_sigval = gr.Number(0.1, label='BM3D sigma 값', visible=False)
+                with gr.Group(visible=False) as g_int:
+                    e_intmode = gr.Dropdown(PP.INTENSITY_MODES, value='log1p', label='intensity mode')
+                with gr.Group(visible=False) as g_clip:
+                    with gr.Row():
+                        e_cmin = gr.Number(0.2, label='clip min %')
+                        e_cmax = gr.Number(99.8, label='clip max %')
+                        e_ign = gr.Checkbox(True, label='0값 제외')
+                with gr.Group(visible=False) as g_hist:
+                    with gr.Row():
+                        e_histmode = gr.Dropdown(PP.HISTOGRAM_MODES, value='sar_only', label='histogram 모드')
+                        e_bins = gr.Number(1024, label='bins', precision=0)
+                        e_clahe = gr.Checkbox(False, label='CLAHE')
+                    e_optref = gr.Textbox('', label='Optical 참조 폴더 (unpaired 모드)')
+                with gr.Group(visible=False) as g_resize:
+                    e_size = gr.Number(256, label='resize image_size', precision=0)
+                with gr.Group(visible=False) as g_chan:
+                    e_ch = gr.Number(3, label='출력 채널', precision=0)
                 pp_apply_btn = gr.Button('✔ 적용', variant='primary')
 
             # edit widget order (matches pp_on_select outputs tail & pp_apply args)
             edit_widgets = [e_method, e_window, e_enlauto, e_enlval, e_damp, e_sigauto,
                             e_sigval, e_intmode, e_cmin, e_cmax, e_ign, e_histmode,
                             e_bins, e_optref, e_clahe, e_size, e_ch]
+            edit_groups = [g_spk, g_int, g_clip, g_hist, g_resize, g_chan]
 
             # wiring
             pp_add_btn.click(pp_add_category, inputs=[pp_steps, pp_addcat, pp_sel],
@@ -1335,13 +1395,14 @@ def build_ui():
                             outputs=[pp_steps, pp_table, pp_sel])
             pp_reset_btn.click(pp_reset_steps, outputs=[pp_steps, pp_table, pp_sel])
             pp_table.select(pp_on_select, inputs=[pp_steps],
-                            outputs=[pp_sel, pp_edit_panel, pp_edit_title] + edit_widgets)
+                            outputs=[pp_sel, pp_edit_panel, pp_edit_title] + edit_groups + edit_widgets)
             e_method.change(pp_speckle_vis, inputs=e_method,
                             outputs=[e_window, e_enlauto, e_enlval, e_damp, e_sigauto, e_sigval])
             pp_apply_btn.click(pp_apply, inputs=[pp_steps, pp_sel] + edit_widgets,
                                outputs=[pp_steps, pp_table])
 
             pp_io_inputs = [pp_steps, pp_in, pp_out, pp_max, pp_recursive, pp_shuffle]
+            pp_save_btn.click(pp_save_btn_fn, inputs=pp_io_inputs, outputs=pp_save_msg)
 
             with gr.Accordion('⑤ 미리보기 (Before / After)', open=True):
                 pp_prev_btn = gr.Button('🔍 첫 이미지 미리보기')
